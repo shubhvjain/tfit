@@ -2,8 +2,8 @@ import os
 import click
 from typing import Dict, Any
 
-from tfit.config import load_config_file
-from tfit.setup import ensure_all_data
+from tfitpy.config import load_config_file
+from tfitpy.setup import ensure_all_data
 
 
 @click.group()
@@ -39,7 +39,7 @@ def cli(ctx: click.Context, config_path: str | None):
 @click.pass_context
 def init(ctx: click.Context, output: str):
     """Generate blank config file."""
-    from tfit.config import save_blank_config
+    from tfitpy.config import save_blank_config
     
     path = save_blank_config(output)
     click.echo(f"Blank config created: {path}")

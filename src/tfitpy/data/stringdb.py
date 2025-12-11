@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
 import pandas as pd
 
-from tfit.utils import download_file, resolve_module_config
+from tfitpy.utils import download_file, resolve_module_config
 
 
 META: Dict[str, Any] = {

@@ -30,4 +30,4 @@ sphinx-autodoc-typehints = "3.5.1"
 pytest = "^9.0.2"
 
 [tool.poetry.scripts]
-tfit = "tfit.cli:cli"
+tfitpy = "tfitpy.cli:cli"

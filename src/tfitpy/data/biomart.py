@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional,List
 import pandas as pd
 
-from tfit.utils import download_file, resolve_module_config
+from tfitpy.utils import download_file, resolve_module_config
 
 META: Dict[str, Any] = {
     "url": "http://www.ensembl.org/biomart/martservice?query=<?xml version='1.0' encoding='UTF-8'?><!DOCTYPE Query><Query virtualSchemaName='default' formatter='TSV' header='1' uniqueRows='1' datasetConfigVersion='0.6'><Dataset name='hsapiens_gene_ensembl' interface='default'><Attribute name='ensembl_gene_id'/><Attribute name='external_gene_name'/><Attribute name='entrezgene_id'/><Attribute name='uniprotswissprot'/><Attribute name='refseq_mrna'/><Attribute name='description'/></Dataset></Query>",

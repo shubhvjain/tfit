@@ -2,9 +2,9 @@ from typing import List
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import tfit.data.hippie as hippie
-import tfit.data.biomart as biomart
-import tfit.data.stringdb as stringdb
+import tfitpy.data.hippie as hippie
+import tfitpy.data.biomart as biomart
+import tfitpy.data.stringdb as stringdb
 
 
 DATA_SOURCES = [

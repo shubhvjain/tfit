@@ -28,7 +28,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 }
 
-TOOL_NAME = "tfit"
+TOOL_NAME = "tfitpy"
 TOOL_AUTHOR = "SVJ"
 
 # Default base directory for all data when no data_path is provided in config.

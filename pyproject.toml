@@ -1,5 +1,5 @@
 [project]
-name = "tfit"
+name = "tfitpy"
 version = "0.0.1"
 description = "TFit : Assessing the combinatorial potential of Transcription Factors in Gene Regulation"
 authors = [

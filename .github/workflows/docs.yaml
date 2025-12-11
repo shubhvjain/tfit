@@ -34,9 +34,6 @@ jobs:
           cd docs
           sphinx-build -b html . _build/html
 
-      - name: List files in build directory
-        run: ls -R ./docs/_build/html
-
       - name: Upload static files as artifact
         uses: actions/upload-pages-artifact@v3
         with:

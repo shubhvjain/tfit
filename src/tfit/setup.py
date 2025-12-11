@@ -1,24 +1,35 @@
 from typing import List
-from tfit.data import (
-    hippie,biomart,stringdb 
-)
-from .utils import DATA_DIR
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import tfit.data.hippie as hippie
+import tfit.data.biomart as biomart
+import tfit.data.stringdb as stringdb
+
 
 DATA_SOURCES = [
     hippie,
     biomart,
-    stringdb
+    stringdb,
 ]
 
-def ensure_all_data():
-    """Download all required data sources"""
-    missing = [src for src in DATA_SOURCES if not src.is_ready()]
+def ensure_all_data(config: Optional[Dict[str, Any]] = None) -> None:
+    """Download all required data sources using the provided config.
+
+    Args:
+        config: Global config dict (may be {} or None). Passed to each
+            data source's download() function.
+    """
+    missing = [src for src in DATA_SOURCES if not src.is_ready(config)]
+    
     if not missing:
         print("All data sources ready!")
         return
     
     print(f"Downloading {len(missing)} missing sources...")
     for src in missing:
-        src.download()
+        #src_name = src.__name__.split('.')[-1]  # "hippie", "biomart", etc.
+        #print(f"Downloading {src_name}...")
+        src.download(config)
     
-    print(f"All data ready at {DATA_DIR}")
+    print("All data ready!")

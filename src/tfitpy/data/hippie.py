@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, List
 import pandas as pd
 
 from tfitpy.utils import download_file, resolve_module_config
-
+from  tfitpy.data import biomart 
 
 META: Dict[str, Any] = {
     "url": "https://cbdm-01.zdv.uni-mainz.de/~mschaefer/hippie/hippie_current.txt",
@@ -16,18 +16,23 @@ META: Dict[str, Any] = {
         "score",
         "comments",
     ],
-    "filename": "hippie_ppi.txt",  # module default config
+    "raw_filename": "hippie_ppi.txt",  # module default config
+    "ppi_hgnc_filename": "hippie_ppi_hgnc.parquet",
+    "ppi_include_self_loop":False
 }
 
-def _file_path(config: Optional[Dict[str, Any]] = None) -> Path:
+def _file_path(config: Optional[Dict[str, Any]] = None,file_name=None) -> Path:
     """Return the full path to the HIPPIE data file."""
+    if file_name is None:
+        file_name = "raw_filename"
     cfg = resolve_module_config(config, "hippie", META)
-    return cfg["data_path"] / cfg["hippie"]["filename"]
+    return cfg["data_path"] / cfg["hippie"][file_name]
 
 
-def is_ready(config: Optional[Dict[str, Any]] = None) -> bool:
+def is_ready(config: Optional[Dict[str, Any]] = None,file_name=None) -> bool:
     """Return True if the HIPPIE file already exists."""
-    return _file_path(config).exists()
+    
+    return _file_path(config,file_name).exists()
 
 
 def download(config: Optional[Dict[str, Any]] = None) -> None:
@@ -35,7 +40,7 @@ def download(config: Optional[Dict[str, Any]] = None) -> None:
     cfg = resolve_module_config(config, "hippie", META)
     download_file(
         META["url"],
-        cfg["hippie"]["filename"],
+        cfg["hippie"]["raw_filename"],
         base_dir=cfg["data_path"],
     )
 
@@ -212,3 +217,79 @@ def get_edges(
         result_cols.insert(-1, 'edge_type')  # insert before edge_source
     
     return edges[result_cols]
+
+def _build_ppi_hgnc(
+    config: Optional[Dict[str, Any]] = None,
+    db: Optional[pd.DataFrame] = None,
+    gene_mapping: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """
+    Build HIPPIE PPI edges normalized to HGNC symbols and store as parquet.
+    Columns: node1, node2, score, comments, edge_source.
+    """
+
+    cfg = resolve_module_config(config, "hippie", META)
+
+    # 1. Load raw HIPPIE if needed
+    if db is None:
+        db = get(config)
+
+    # 2. Optionally pre-load BioMart mapping to reuse
+    if gene_mapping is None:
+        gene_mapping = biomart.get(config)
+
+    # 3. Use convert_gene_df to map Entrez IDs -> HGNC symbols
+    # gene_source 'entrez_id' is the BioMart column;
+    # target_name 'symbol' is HGNC.
+    gene_columns_map = {
+        "entrez_id_1": "node1",
+        "entrez_id_2": "node2",
+    }
+
+    db_mapped = biomart.convert_gene_df(
+        df=db,
+        gene_columns_map=gene_columns_map,
+        gene_source="entrez_id",
+        target_name="symbol",
+        config=config,
+        mapping_df=gene_mapping,
+    )
+
+    # 4. Drop edges with missing symbols or self-loops if undesired
+    edges = db_mapped.dropna(subset=["node1", "node2"]).copy()
+
+    if cfg["hippie"]["ppi_include_self_loop"] == False:
+        edges = edges[edges["node1"] != edges["node2"]]
+
+    # 5. Keep only normalized columns + metadata
+    edges["edge_source"] = "hippie_ppi"
+    result = edges[["node1", "node2", "score", "comments", "edge_source"]].copy()
+
+    # 6. Store as parquet
+    out_path = _file_path(config, "ppi_hgnc_filename")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    result.to_parquet(out_path, index=False)
+
+    return result
+
+
+def get_ppi(
+    config: Optional[Dict[str, Any]] = None,
+    rebuild: bool = False,
+    gene_mapping: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """
+    Return HIPPIE PPI edges with HGNC symbols.
+    Builds and caches the file on first use (or when rebuild=True).
+    
+    Returns:
+        DataFrame with columns: node1, node2, score, comments, edge_source
+    """
+    ppi_path = _file_path(config,"ppi_hgnc_filename") 
+
+    if not rebuild and ppi_path.exists():
+        # Fast path: just load
+        return pd.read_parquet(ppi_path)
+
+    # Slow path: build from raw HIPPIE + BioMart
+    return _build_ppi_hgnc(config=config, db=None, gene_mapping=gene_mapping)

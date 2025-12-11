@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import Any, Dict, Optional,List
+from typing import Dict, List, Optional, Any
+
 import pandas as pd
 
 from tfitpy.utils import download_file, resolve_module_config
@@ -114,3 +115,49 @@ def convert_genes(
             results[gene_id] = None
     
     return results
+
+def convert_gene_df(
+    df: pd.DataFrame,
+    gene_columns_map: Dict[str, str],
+    gene_source: str,
+    target_name: str,
+    config: Optional[Dict[str, Any]] = None,
+    mapping_df: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """
+    Vectorized conversion of multiple gene ID columns using BioMart.
+    """
+    if mapping_df is None:
+        mapping_df = get(config)
+
+    # Coerce lookup key to string for safe merging (handles Int64 vs object)
+    mapping_df = mapping_df.copy()
+    mapping_df[gene_source] = mapping_df[gene_source].astype(str)
+
+    # Only needed columns; drop duplicates for efficiency
+    lookup = (
+        mapping_df[[gene_source, target_name]]
+        .dropna(subset=[gene_source])
+        .drop_duplicates(subset=[gene_source])
+    )
+
+    out = df.copy()
+
+    for src_col, new_col in gene_columns_map.items():
+        if src_col not in out.columns:
+            raise KeyError(f"Column '{src_col}' not in DataFrame")
+
+        # Temporary frame with coerced string key
+        tmp = out[[src_col]].copy()
+        tmp[src_col] = tmp[src_col].astype(str)
+        tmp = tmp.rename(columns={src_col: gene_source})
+
+        tmp = tmp.merge(
+            lookup,
+            how="left",
+            on=gene_source,
+        )
+
+        out[new_col] = tmp[target_name]
+
+    return out

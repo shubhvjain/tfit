@@ -14,4 +14,11 @@ documentation for details.
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
-
+   
+   about
+   start
+   tutorial1
+   data_api
+   index_api
+   setup
+   reference

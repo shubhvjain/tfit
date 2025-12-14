@@ -19,3 +19,6 @@ documentation for details.
    start
    tutorial1
    data_api
+   index_api
+   setup
+   reference

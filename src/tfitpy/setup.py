@@ -1,3 +1,17 @@
+"""
+This is the setup script. It can be run via the CLI.
+It main purpose is to prepare the local system by downloading all the data required by the package and finishing other preprocessing steps. 
+It requires the user to specify a location to a directory where all the data will be stored. Since the data is same, it can be installed as globally and the same folder path can be used in multiple projects. 
+
+THe scripts downloads the following databases. Please see the reference page for more details about the source and their citations. 
+
+- HIPPIE PPI (:cite:t:`hippie`)
+- StringDB PPI (:cite:t:`string`)
+- BioGRID Database (:cite:t:`biogrid`)
+- BioMart (:cite:t:`biomart`)
+
+"""
+
 from typing import List
 from pathlib import Path
 from typing import Any, Dict, Optional

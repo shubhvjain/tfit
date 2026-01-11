@@ -1,6 +1,6 @@
 [project]
 name = "tfitpy"
-version = "0.0.1"
+version = "0.0.2"
 description = "TFit : Assessing the combinatorial potential of Transcription Factors in Gene Regulation"
 authors = [
     {name = "SVJ"}
@@ -16,6 +16,7 @@ dependencies = [
     "click (>=8.3.1,<9.0.0)",
     "fastparquet (>=2024.11.0,<2025.0.0)",
     "networkx (>=3.6.1,<4.0.0)",
+    "scipy (>=1.17.0,<2.0.0)",
 ]
 
 

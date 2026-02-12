@@ -3,24 +3,9 @@ import pandas as pd
 import numpy as np
 from typing import Dict, Any, List, Tuple
 from scipy.stats import hypergeom
-from tfitpy.data.grn import get_collecTRI_Human
 from tfitpy.utils import generate_tf_pairs
 
 
-def get_grn_graph(edges: pd.DataFrame = None) -> nx.DiGraph:
-    """Convert GRN edges to NetworkX DiGraph."""
-    if edges is None:
-        edges = get_collecTRI_Human()
-    
-    # Assume columns: source, target, [score, etc.]
-    G = nx.from_pandas_edgelist(
-        edges, 
-        source='source', 
-        target='target', 
-        edge_attr=True,  # preserve all columns as edge attributes
-        create_using=nx.DiGraph()
-    )
-    return G
 
 def get_targets(grn_graph: nx.DiGraph, node: str) -> set:
     """Get all direct targets (out-neighbors) of a regulator."""
@@ -81,6 +66,7 @@ def target_overlap_score(
     background_size: int = None,
     aggregation_method: str = "mean",
     datasets = None,
+    **args
 ) -> Tuple[float, pd.DataFrame, Dict[str, Any]]:
     """
     Compute target overlap significance score for all regulator pairs in module.
@@ -163,7 +149,7 @@ def target_overlap_score(
 
 
 GRN_METHODS = {
-    'target_overlap_score': {
+    'grn_target_overlap_score': {
         'func': target_overlap_score,
         'datasets': ['collectri']
     }

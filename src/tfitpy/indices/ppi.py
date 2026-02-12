@@ -81,7 +81,8 @@ def shortest_path_score_hippie(
         sources: list,
         target: str,
         aggregation_method: str = "mean",
-        datasets=None
+        datasets=None,
+        **args
 ):
     """
     Docstring for shortest_path_score_hippie
@@ -185,6 +186,7 @@ def hypergeom_score_for_pair(tf1: str, tf2: str,
 
 def hypergeom_index_score(
     sources:list,
+    target:list,
     ppi_network: nx.Graph = None,
     aggregation_method: str = "mean",
     background_size: int = None,
@@ -264,7 +266,8 @@ def hypergeometic_index_score_hippie(
         sources: list,
         target: str,
         aggregation_method: str = "mean",
-        datasets=None
+        datasets=None,
+        **args
 ):
     """
     Docstring for hypergeometic_index_score_hippie

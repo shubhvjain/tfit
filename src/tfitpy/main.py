@@ -1,77 +1,157 @@
-from itertools import combinations, product
 import pandas as pd
 from joblib import Parallel, delayed
-import pandas as pd
-import numpy as np
+from pathlib import Path
 
+from tfitpy.datasets import DATASETS
+from tfitpy.indices import METHODS 
 
-DEFAULT_INDICES = []
-
-DEFAULT_INDEX_OPTIONS= {
-
-}
-
-def load_required_data(selected_indices):
-   """
-   This method loads all the common data required to compute indices and stores in the the global COMMON_STORE.
-   """
-  
-
-def indices_for_item(row, indices=None, index_options=None, data_path=None):
+def load_datasets(cache=None, methods=None, data_path=None):
     """
-    Compute indices for an individual row
+    Load datasets into a key value cache variable for specified methods.
     
-    :param chunk: Description
-    :param indices: Description
-    :param index_options: Description
-    :param data_path: Description
-    """
-    row["new_col1"] = "hi"  # Use params as needed, e.g., load data from data_path
-    row["new_col2"] = "hellooo"
-    row["new_col3"] = 1
-    return row
-
-
-def parallel_apply(df, func, n_jobs=-1, **kwargs):
-    """
-   To run computations in parallel 
+    This function can either create a new cache or add to an existing one.
+    It loads only the datasets required by the specified methods.
     
-    :param df: Input dataframe
-    :param func: method that computes indices of individual case
-    :param n_jobs: Number of jobs to run in parallel
+    Args:
+        cache: Existing cache dict to update (optional). If None, creates new cache.
+        methods: List of method names that will be used. Loads their required datasets.
+        data_path: Path where datasets are stored (from setup_datasets)
+    
+    Returns:
+        Cache dict with loaded datasets
+        
+    Examples:
+        # Create new cache
+        cache = load_datasets(methods=['m1', 'm2'], data_path='./data')
+        
+        # Add more datasets to existing cache
+        load_datasets(cache, methods=['m3'], data_path='./data')
     """
-    splits = np.array_split(df.index, max(1, n_jobs)) 
-    results = Parallel(n_jobs=n_jobs)(delayed(func)(df.loc[split_idx], **kwargs) for split_idx in splits)
-    return pd.concat(results, ignore_index=False)
+    # Create new cache if none provided
+    if cache is None:
+        cache = {}
+    
+    if methods is None:
+        raise ValueError("methods parameter is required")
+    
+    if data_path is None:
+        raise ValueError("data_path parameter is required")
+    
+    data_path = Path(data_path)
+    
+    # Validate methods exist
+    invalid_methods = set(methods) - set(METHODS.keys())
+    if invalid_methods:
+        raise ValueError(f"Unknown methods: {invalid_methods}")
+    
+    # Determine which datasets are needed
+    datasets_needed = set()
+    for method_name in methods:
+        method_config = METHODS[method_name]
+        datasets_needed.update(method_config['datasets'])
+    
+    # Filter out datasets already in cache
+    datasets_to_load = [ds for ds in datasets_needed if ds not in cache]
+    
+    if len(datasets_to_load) == 0:
+        print("All required datasets already loaded in cache")
+        return cache
+    
+    print(f"Loading {len(datasets_to_load)} dataset(s): {list(datasets_to_load)}")
+    print("=" * 60)
+    
+    # Load each dataset
+    for ds_name in datasets_to_load:
+        if ds_name not in DATASETS:
+            raise ValueError(f"Dataset '{ds_name}' not found in registry")
+        
+        ds_config = DATASETS[ds_name]
+        print(f"Loading {ds_name}...")
+        
+        try:
+            cache[ds_name] = ds_config['load'](data_path)
+            print(f"{ds_name} loaded")
+        except Exception as e:
+            print(f"{ds_name} failed to load: {e}")
+            raise
+    
+    print("=" * 60)
+    print(f"Cache now contains {len(cache)} dataset(s): {list(cache.keys())}")
+    
+    return cache
+
+def _compute_row_indices(row, methods, cache, options):
+    """
+    Compute indices for a single row.
+    Cache is shared read-only across all workers.
+    
+    Args:
+        row: Single row (Series) from dataframe
+        methods: List of method names to compute
+        cache: Pre-loaded datasets (pickeable, read-only)
+    
+    Returns:
+        Row with new columns added
+    """
+    row_dict = row.to_dict()
+    row_dict["sources"] = row_dict["sources"].split(";")
+    for method_name in methods:
+        method_config = METHODS[method_name]
+        func = method_config['func']
+        
+        try:
+            # Call method with row data and cache
+            result,p,m = func(datasets=cache,**options,**row_dict)
+            row_dict[method_name] = round(result,5)
+        except Exception as e:
+            print(e)
+            print(f"Error in {method_name} for row {row.name}: {e}")
+            row_dict[method_name] = None
+            raise e
+    row_dict["sources"] = ';'.join(row_dict["sources"])
+    return pd.Series(row_dict)
 
 
-
-##### The main method
-
-def compute_indices(clusters=None, n_jobs=1, indices=None, index_options=None, sources_separator=";", data_path=None):
-  """
-  Takes a dataframe of clusters with cols 'sources', 'target'. Sources must be separated with the separator specified.
-
-  """
-  if clusters is None:
-    raise ValueError("No dataframe provided")
-  
-  if data_path is None:
-     raise ValueError("Provide a path where datasets are stored/ will be downloaded")
-
-  if indices is None:
-    indices = DEFAULT_INDICES
-  if index_options is None:
-    index_options = DEFAULT_INDEX_OPTIONS
-
-  if 'sources' not in clusters.columns:
-    raise ValueError("Dataframe does not have the sources col")
-  
-  if 'target' not in clusters.columns:
-    raise ValueError("Dataframe does not have target column")
-  
-  dataset_cache = load_required_data()
-
-
-  df = parallel_apply(clusters, indices_for_item, n_jobs=-1,dataset_cache=dataset_cache)
-  return df
+def compute_indices(df, methods=None, data_path=None, n_jobs=-1,options={}):
+    """
+    Compute multiple indices/methods on a dataframe in parallel.
+    
+    Args:
+        df: Input dataframe with 'sources', 'target', etc.
+        methods: List of method names to compute (default: all methods)
+        data_path: Path where datasets are stored
+        n_jobs: Number of parallel jobs (-1 = all cores)
+    
+    Returns:
+        DataFrame with new columns for each method
+    """
+    if df is None:
+        raise ValueError("No dataframe provided")
+    
+    if data_path is None:
+        raise ValueError("data_path is required")
+    
+    if methods is None:
+        methods = list(METHODS.keys())
+    
+    # Validate required columns
+    required_cols = ['sources', 'target']
+    missing_cols = set(required_cols) - set(df.columns)
+    if missing_cols:
+        raise ValueError(f"DataFrame missing required columns: {missing_cols}")
+    
+    print(f"Computing {len(methods)} method(s) on {len(df)} rows using {n_jobs} jobs")
+    
+    # Load cache ONCE - shared read-only across all workers
+    cache = load_datasets(methods=methods, data_path=data_path)
+    
+    # Parallel processing
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(_compute_row_indices)(row, methods, cache, options)
+        for idx, row in df.iterrows()
+    )
+    
+    result_df = pd.DataFrame(results)
+    
+    print(f"Computation complete. Added {len(methods)} column(s)")
+    return result_df

@@ -1,3 +1,3 @@
-from tfitpy.main import generate_pairs
+from tfitpy.main import compute_indices
 
-_all_=["generate_pairs"]
+_all_=["compute_indices"]

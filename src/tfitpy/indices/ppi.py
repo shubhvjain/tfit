@@ -25,7 +25,8 @@ def shortest_path_score(
         sources: list,
         target: str,
         ppi_network: nx.Graph = None,
-        aggregation_method: str = "mean"
+        aggregation_method: str = "mean",
+        pairs = None
 ) -> tuple:
     """
     For all pairs of TF in the given module, compute shortest path score between the 2 TFs.
@@ -40,7 +41,8 @@ def shortest_path_score(
     if ppi_network is None:
         raise ValueError("No graph provided")
 
-    pairs = generate_tf_pairs(sources)
+    if pairs is None :
+        pairs = generate_tf_pairs(sources)
     pair_results = []
 
     for tf1, tf2 in pairs:
@@ -82,6 +84,7 @@ def shortest_path_score_hippie(
         target: str,
         aggregation_method: str = "mean",
         datasets=None,
+        pairs=None,
         **args
 ):
     """
@@ -95,7 +98,7 @@ def shortest_path_score_hippie(
         raise ValueError("Dataset dependency missing")
 
     ppi_graph = datasets["hippie"]
-    return shortest_path_score(sources=sources, target=target, aggregation_method=aggregation_method, ppi_network=ppi_graph)
+    return shortest_path_score(sources=sources, target=target, aggregation_method=aggregation_method, ppi_network=ppi_graph,pairs=pairs)
 
 
 # =========|
@@ -190,6 +193,7 @@ def hypergeom_index_score(
     ppi_network: nx.Graph = None,
     aggregation_method: str = "mean",
     background_size: int = None,
+    pairs=None
 ) -> Tuple[float, pd.DataFrame, Dict[str, Any]]:
     """
     TF-based performance index 1 (hypergeometric distribution score).
@@ -204,7 +208,9 @@ def hypergeom_index_score(
     if ppi_network is None:
         raise ValueError("No graph provided")
 
-    pairs = generate_tf_pairs(sources)
+    if pairs is None:
+        pairs = generate_tf_pairs(sources)
+    
     pair_results = []
 
     if background_size is None:
@@ -267,6 +273,7 @@ def hypergeometic_index_score_hippie(
         target: str,
         aggregation_method: str = "mean",
         datasets=None,
+        pairs=None,
         **args
 ):
     """
@@ -280,7 +287,7 @@ def hypergeometic_index_score_hippie(
         raise ValueError("Dataset dependency missing")
 
     ppi_graph = datasets["hippie"]
-    return hypergeom_index_score(sources=sources, target=target, aggregation_method=aggregation_method, ppi_network=ppi_graph)
+    return hypergeom_index_score(sources=sources, target=target, aggregation_method=aggregation_method, ppi_network=ppi_graph,pairs=pairs)
 
 
 

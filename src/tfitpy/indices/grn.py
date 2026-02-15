@@ -66,6 +66,7 @@ def target_overlap_score(
     background_size: int = None,
     aggregation_method: str = "mean",
     datasets = None,
+    pairs = None,
     **args
 ) -> Tuple[float, pd.DataFrame, Dict[str, Any]]:
     """
@@ -96,8 +97,10 @@ def target_overlap_score(
     if background_size is None:
         background_size = len(grn_graph.nodes())
     
-    pairs = generate_tf_pairs(sources)
-    pair_results: List[Dict[str, Any]] = []
+    if pairs is None:
+        pairs = generate_tf_pairs(sources)
+    
+    pair_results = []
     
     for reg1, reg2 in pairs:
         score, info = target_overlap_score_for_pair(

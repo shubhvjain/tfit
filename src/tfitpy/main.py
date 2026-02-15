@@ -2,6 +2,9 @@ import pandas as pd
 from joblib import Parallel, delayed
 from pathlib import Path
 
+from tfitpy.utils import generate_tf_pairs
+
+
 from tfitpy.datasets import DATASETS
 from tfitpy.indices import METHODS 
 
@@ -95,13 +98,14 @@ def _compute_row_indices(row, methods, cache, options):
     """
     row_dict = row.to_dict()
     row_dict["sources"] = row_dict["sources"].split(";")
+    row_pairs = generate_tf_pairs(row_dict["sources"])
     for method_name in methods:
         method_config = METHODS[method_name]
         func = method_config['func']
         
         try:
             # Call method with row data and cache
-            result,p,m = func(datasets=cache,**options,**row_dict)
+            result,p,m = func(datasets=cache,pairs=row_pairs,**options,**row_dict)
             row_dict[method_name] = round(result,5)
         except Exception as e:
             print(e)

@@ -5,6 +5,9 @@ from tfitpy.utils import generate_tf_pairs
 import pandas as pd
 from scipy.stats import hypergeom
 
+
+
+
 # =========|
 # Index 2 |
 # =========|
@@ -26,22 +29,22 @@ def shortest_path_score(
         target: str,
         ppi_network: nx.Graph = None,
         aggregation_method: str = "mean",
-        pairs = None
+        pairs=None
 ) -> tuple:
     """
     For all pairs of TF in the given module, compute shortest path score between the 2 TFs.
 
-    :param config: Database config
-    :param module: Input dict with gene_cluster
-    :param ppi_source: PPI database name
+    :param sources: List of TF gene symbols
+    :param target: Target gene symbol
     :param ppi_network: Pre-loaded PPI network
     :param aggregation_method: "mean", "median", "max"
+    :param pairs: Optional pre-computed TF pairs
     :return: tuple(final_score, pairs_df, metadata)
     """
     if ppi_network is None:
         raise ValueError("No graph provided")
 
-    if pairs is None :
+    if pairs is None:
         pairs = generate_tf_pairs(sources)
     pair_results = []
 
@@ -54,10 +57,8 @@ def shortest_path_score(
             'path_length': path_length
         })
 
-    # Create DataFrame
     pairs_df = pd.DataFrame(pair_results)
 
-    # Compute aggregations
     valid_proximities = pairs_df['proximity_score'].replace(0, np.nan).dropna()
     methods = {
         "mean": np.mean(valid_proximities) if len(valid_proximities) > 0 else 0.0,
@@ -67,7 +68,6 @@ def shortest_path_score(
 
     final_score = methods.get(aggregation_method, np.mean(valid_proximities))
 
-    # Metadata
     metadata = {
         "input_module": sources,
         "total_pairs": len(pairs),
@@ -79,6 +79,20 @@ def shortest_path_score(
     return final_score, pairs_df, metadata
 
 
+def _shortest_path_wrapper(db_key: str, sources, target, aggregation_method, datasets, pairs):
+    """Shared logic for all per-database shortest-path wrappers."""
+    if datasets is None:
+        raise ValueError("datasets cache is required. Create cache with load_datasets() first.")
+    if db_key not in datasets:
+        raise ValueError(f"Dataset dependency missing: '{db_key}'")
+    return shortest_path_score(
+        sources=sources,
+        target=target,
+        aggregation_method=aggregation_method,
+        ppi_network=datasets[db_key],
+        pairs=pairs,
+    )
+
 def shortest_path_score_hippie(
         sources: list,
         target: str,
@@ -87,23 +101,56 @@ def shortest_path_score_hippie(
         pairs=None,
         **args
 ):
-    """
-    Docstring for shortest_path_score_hippie
-    """
-    if datasets is None:
-        raise ValueError(
-            "datasets cache is required. Create cache with load_datasets() first.")
+    """Shortest path proximity score using the HIPPIE PPI network."""
+    return _shortest_path_wrapper("hippie", sources, target, aggregation_method, datasets, pairs)
 
-    if "hippie" not in datasets:
-        raise ValueError("Dataset dependency missing")
 
-    ppi_graph = datasets["hippie"]
-    return shortest_path_score(sources=sources, target=target, aggregation_method=aggregation_method, ppi_network=ppi_graph,pairs=pairs)
+def shortest_path_score_stringdb(
+        sources: list,
+        target: str,
+        aggregation_method: str = "mean",
+        datasets=None,
+        pairs=None,
+        **args
+):
+    """Shortest path proximity score using the STRING PPI network."""
+    return _shortest_path_wrapper("stringdb", sources, target, aggregation_method, datasets, pairs)
+
+
+def shortest_path_score_biogrid(
+        sources: list,
+        target: str,
+        aggregation_method: str = "mean",
+        datasets=None,
+        pairs=None,
+        **args
+):
+    """Shortest path proximity score using the BioGRID PPI network."""
+    return _shortest_path_wrapper("biogrid", sources, target, aggregation_method, datasets, pairs)
+
+
 
 
 # =========|
 # Index 1 |
 # =========|
+
+
+
+def _hypergeom_wrapper(db_key: str, sources, target, aggregation_method, datasets, pairs):
+    """Shared logic for all per-database hypergeometric wrappers."""
+    if datasets is None:
+        raise ValueError("datasets cache is required. Create cache with load_datasets() first.")
+    if db_key not in datasets:
+        raise ValueError(f"Dataset dependency missing: '{db_key}'")
+    return hypergeom_index_score(
+        sources=sources,
+        target=target,
+        aggregation_method=aggregation_method,
+        ppi_network=datasets[db_key],
+        pairs=pairs,
+    )
+
 
 
 def get_ppi_partners(ppi_graph: nx.Graph, node: str) -> set:
@@ -276,18 +323,32 @@ def hypergeometic_index_score_hippie(
         pairs=None,
         **args
 ):
-    """
-    Docstring for hypergeometic_index_score_hippie
-    """
-    if datasets is None:
-        raise ValueError(
-            "datasets cache is required. Create cache with load_datasets() first.")
+    """Hypergeometric overlap score using the HIPPIE PPI network."""
+    return _hypergeom_wrapper("hippie", sources, target, aggregation_method, datasets, pairs)
 
-    if "hippie" not in datasets:
-        raise ValueError("Dataset dependency missing")
 
-    ppi_graph = datasets["hippie"]
-    return hypergeom_index_score(sources=sources, target=target, aggregation_method=aggregation_method, ppi_network=ppi_graph,pairs=pairs)
+def hypergeometic_index_score_stringdb(
+        sources: list,
+        target: str,
+        aggregation_method: str = "mean",
+        datasets=None,
+        pairs=None,
+        **args
+):
+    """Hypergeometric overlap score using the STRING PPI network."""
+    return _hypergeom_wrapper("stringdb", sources, target, aggregation_method, datasets, pairs)
+
+
+def hypergeometic_index_score_biogrid(
+        sources: list,
+        target: str,
+        aggregation_method: str = "mean",
+        datasets=None,
+        pairs=None,
+        **args
+):
+    """Hypergeometric overlap score using the BioGRID PPI network."""
+    return _hypergeom_wrapper("biogrid", sources, target, aggregation_method, datasets, pairs)
 
 
 
@@ -297,8 +358,27 @@ PPI_METHODS = {
         'func': shortest_path_score_hippie,
         'datasets': ['hippie']
     },
+
+    'shortest_path_score_stringdb': {
+        'func': shortest_path_score_stringdb,
+        'datasets': ['stringdb'],
+    },
+    'shortest_path_score_biogrid': {
+        'func': shortest_path_score_biogrid,
+        'datasets': ['biogrid'],
+    },
+
     'hypergeometric_index_score_hippie': {
         'func': hypergeometic_index_score_hippie,
         'datasets': ['hippie']
-    }
+    },
+    
+    'hypergeometric_index_score_stringdb': {
+        'func': hypergeometic_index_score_stringdb,
+        'datasets': ['stringdb'],
+    },
+    'hypergeometric_index_score_biogrid': {
+        'func': hypergeometic_index_score_biogrid,
+        'datasets': ['biogrid'],
+    },
 }

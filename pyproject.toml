@@ -1,6 +1,6 @@
 [project]
 name = "tfitpy"
-version = "0.0.6"
+version = "0.0.8"
 description = "TFit : Assessing the combinatorial potential of Transcription Factors in Gene Regulation"
 authors = [
     {name = "SVJ"}
@@ -20,7 +20,8 @@ dependencies = [
     "scipy (<1.16)",
     "omnipath (>=1.0.12,<2.0.0)",
     "joblib (>=1.5.3,<2.0.0)",
-    "pooch (>=1.9.0,<2.0.0)"
+    "pooch (>=1.9.0,<2.0.0)",
+    "goatools (>=1.5.2,<2.0.0)"
 
 ]
 

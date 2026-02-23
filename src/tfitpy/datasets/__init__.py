@@ -9,4 +9,4 @@ DATASETS = {
   ** PPI_DATASETS
 }
  
-FIRST_ORDER  =  ["biomart"]
+FIRST_ORDER  =  ["biomart","gencode"]

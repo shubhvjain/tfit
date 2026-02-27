@@ -6,8 +6,8 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'TFit'
-copyright = '2025, Shubh Vardhan Jain'
+project = 'TFitPy'
+copyright = '2026, Shubh Vardhan Jain'
 author = 'Shubh Vardhan Jain'
 
 # -- General configuration ---------------------------------------------------

@@ -1,5 +1,4 @@
-from tfitpy.main import load_datasets, compute_indices
-from tfitpy.setup import setup_datasets
+from tfitpy.main import compute_indices,load_cache
 
 from tfitpy.datasets.gene_names import convert_gene_df
-_all_=["setup_datasets","load_datasets","compute_indices","convert_gene_df"]
+_all_=["load_cache","compute_indices","convert_gene_df"]

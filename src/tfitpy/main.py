@@ -1,14 +1,13 @@
 import pandas as pd
 from joblib import Parallel, delayed
 from pathlib import Path
-
 from tfitpy.utils import generate_tf_pairs
-
 
 from tfitpy.datasets import DATASETS
 from tfitpy.indices import METHODS 
 
-def load_datasets(cache=None, methods=None, data_path=None):
+
+def load_cache(cache=None, methods=None, data_path=None):
     """
     Load datasets into a key value cache variable for specified methods.
     
@@ -35,7 +34,7 @@ def load_datasets(cache=None, methods=None, data_path=None):
         cache = {}
     
     if methods is None:
-        raise ValueError("methods parameter is required")
+        methods = list(METHODS.keys())
     
     if data_path is None:
         raise ValueError("data_path parameter is required")
@@ -83,6 +82,7 @@ def load_datasets(cache=None, methods=None, data_path=None):
     
     return cache
 
+
 def _compute_row_indices(row, methods, cache, options):
     """
     Compute indices for a single row.
@@ -105,7 +105,7 @@ def _compute_row_indices(row, methods, cache, options):
         
         try:
             # Call method with row data and cache
-            result,p,m = func(datasets=cache,pairs=row_pairs,**options,**row_dict)
+            result,pair_data = func(datasets=cache,pairs=row_pairs,**options,**row_dict)
             row_dict[method_name] = round(result,5)
         except Exception as e:
             print(e)
@@ -114,7 +114,6 @@ def _compute_row_indices(row, methods, cache, options):
             raise e
     row_dict["sources"] = ';'.join(row_dict["sources"])
     return pd.Series(row_dict)
-
 
 def compute_indices(df, methods=None, data_path=None, n_jobs=-1,options={}):
     """
@@ -147,10 +146,10 @@ def compute_indices(df, methods=None, data_path=None, n_jobs=-1,options={}):
     print(f"Computing {len(methods)} method(s) on {len(df)} rows using {n_jobs} jobs")
     
     # Load cache ONCE - shared read-only across all workers
-    cache = load_datasets(methods=methods, data_path=data_path)
+    cache = load_cache(methods=methods, data_path=data_path)
     
     # Parallel processing
-    results = Parallel(n_jobs=n_jobs)(
+    results = Parallel(n_jobs=1)(
         delayed(_compute_row_indices)(row, methods, cache, options)
         for idx, row in df.iterrows()
     )

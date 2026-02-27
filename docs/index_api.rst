@@ -1,8 +1,7 @@
-Indices API
-============
-
-PPI Based 
--------------
-
-.. automodule:: tfitpy.ppi
+Indices
+=========
+PPI Based
+---------
+.. automodule:: tfitpy.indices.ppi
    :members:
+   :undoc-members:

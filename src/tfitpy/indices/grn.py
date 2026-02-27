@@ -148,7 +148,7 @@ def target_overlap_score(
         },
     }
     
-    return final_score, pairs_df, metadata
+    return final_score, pairs_df
 
 
 GRN_METHODS = {

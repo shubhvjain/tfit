@@ -1,159 +1,235 @@
-import networkx as nx
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List, Tuple
-from scipy.stats import hypergeom
-from tfitpy.utils import generate_tf_pairs
+from typing import List, Dict, Tuple, Optional
 
 
-
-def get_targets(grn_graph: nx.DiGraph, node: str) -> set:
-    """Get all direct targets (out-neighbors) of a regulator."""
-    if node not in grn_graph:
-        return set()
-    return set(grn_graph.successors(node))
-
-
-def hypergeom_overlap_pvalue(N: int, N1: int, N2: int, c: int) -> float:
-    """Compute upper-tail hypergeometric P-value: P(X >= c)."""
-    if c == 0 or c > min(N1, N2):
-        return 1.0
-    return float(hypergeom.sf(c - 1, N, N1, N2))
-
-
-def target_overlap_score_for_pair(
-    reg1: str, reg2: str, 
-    grn_graph: nx.DiGraph, 
-    background_size: int
-) -> Tuple[float, Dict[str, Any]]:
-    """
-    Compute hypergeometric score for target overlap between two regulators.
-    
-    Returns:
-        S (float): -log10(P) where P is hypergeometric P-value
-        info (dict): counts and P-value for debugging
-    """
-    targets1 = get_targets(grn_graph, reg1)
-    targets2 = get_targets(grn_graph, reg2)
-    
-    N1 = len(targets1)
-    N2 = len(targets2)
-    
-    if N1 == 0 or N2 == 0:
-        return 0.0, {"reg1": reg1, "reg2": reg2, "N1": N1, "N2": N2, "c": 0, "pvalue": 1.0}
-    
-    common_targets = targets1 & targets2
-    c = len(common_targets)
-    
-    if c == 0:
-        return 0.0, {"reg1": reg1, "reg2": reg2, "N1": N1, "N2": N2, "c": 0, "pvalue": 1.0}
-    
-    P = hypergeom_overlap_pvalue(background_size, N1, N2, c)
-    
-    # Score = -log10(P), handle P=0
-    S = float("inf") if P <= 0 else -np.log10(P)
-    
-    return float(S), {
-        "reg1": reg1, "reg2": reg2, 
-        "N1": N1, "N2": N2, "c": c, 
-        "pvalue": P, "score": S
-    }
-
-
-def target_overlap_score(   
-    sources: list,
+def grn_precision_recall(
+    source: List[str],
     target: str,
-    background_size: int = None,
-    aggregation_method: str = "mean",
-    datasets = None,
-    pairs = None,
-    **args
-) -> Tuple[float, pd.DataFrame, Dict[str, Any]]:
-    """
-    Compute target overlap significance score for all regulator pairs in module.
-    
-    Matches structure of hypergeom_index_score() exactly.
-    
+    grn_data: pd.DataFrame
+) -> Dict:
+    """Calculate precision-recall curve and related metrics using GRN for the source genes.
+
     Args:
-        config: Database config (passed through)
-        module: Dict with "gene_cluster" key containing regulator list
-        grn_graph: Pre-loaded GRN DiGraph (auto-loads if None)
-        aggregation_method: "mean", "median", or "max"
-        background_size: Universe size (auto-detects if None)
-    
+        source: Predicted regulator genes in order (ranked by confidence if available).For unranked predictions, order is arbitrary.
+        target: Target gene name (for validation/reference, grn_data already filtered).
+        grn_data: Ground truth regulators for this target. Must contain columns: ['regulator', 'target', 'score'].  Already filtered to contain only rows where target matches.
+
     Returns:
-        final_score, pairs_df, metadata (exact same format as hypergeom_index_score)
+        A dictionary containing:
+            - max_k: Maximum k value (length of predictions).
+            - values: List of (precision, recall) tuples for k=1,2,...,max_k.
+            - ap: Average Precision score.
+            - precisions_at_tp: List of (k, precision) tuples at each true positive.
+            - k_for_50_percent_recall: k value needed for 50% recall (or None).
+            - k_for_90_percent_recall: k value needed for 90% recall (or None).
+            - num_true_regulators: Total true regulators in ground truth.
+            - num_predictions: Total predictions (len(source)).
+
     """
-
-    if datasets is None:
-        raise ValueError("datasets cache is required. Create cache with load_datasets() first.")
     
-    if "collectri" not in datasets:
-        raise ValueError("Dataset dependency missing")
+    # Handle edge case: no predictions
+    if len(source) == 0:
+        raise ValueError("source is empty")
     
-    grn_graph = datasets["collectri"]
-
+    # Handle edge case: no true regulators
+    if len(grn_data) == 0:
+        raise ValueError("grn_data is empty")
     
-    if background_size is None:
-        background_size = len(grn_graph.nodes())
+    # Get set of true regulators
+    true_regulators = set(grn_data['regulator'].values)
+    num_true = len(true_regulators)
     
-    if pairs is None:
-        pairs = generate_tf_pairs(sources)
+    # Remove duplicates from source while preserving order
+    # seen = set()
+    # source_unique = []
+    # for gene in source:
+    #     if gene not in seen:
+    #         seen.add(gene)
+    #         source_unique.append(gene)
+    # source = source_unique
     
-    pair_results = []
+    # Initialize metric tracking variables
+    pr_values = []
+    precisions_at_tp = []
+    k_for_50_recall = None
+    k_for_90_recall = None
     
-    for reg1, reg2 in pairs:
-        score, info = target_overlap_score_for_pair(
-            reg1, reg2, grn_graph, background_size
-        )
-        row = {
-            "tf1": info["reg1"],     
-            "tf2": info["reg2"],
-            "target_overlap_score": score,
-            "N1": info["N1"], 
-            "N2": info["N2"],  
-            "c": info["c"],   
-            "pvalue": info["pvalue"]
-        }
-        pair_results.append(row)
+    # Calculate precision and recall at each k
+    for k in range(1, len(source) + 1):
+        # Get top-k predictions
+        top_k = source[:k]
+        
+        # Count true positives
+        tp = len([g for g in top_k if g in true_regulators])
+        
+        # Calculate precision and recall
+        precision = tp / k if k > 0 else 0.0
+        recall = tp / num_true if num_true > 0 else 0.0
+        
+        pr_values.append((precision, recall))
+        
+        # Record precision at true positive positions 
+        if source[k-1] in true_regulators:
+            precisions_at_tp.append((k, precision))
+        
+        # Record k values for recall thresholds
+        if k_for_50_recall is None and recall >= 0.5:
+            k_for_50_recall = k
+        if k_for_90_recall is None and recall >= 0.9:
+            k_for_90_recall = k
     
-    pairs_df = pd.DataFrame(pair_results)
+    # Calculate Average Precision (AP)
+    # AP is the sum of precisions at each true positive position divided by total true positives
+    ap = 0.0
+    if len(precisions_at_tp) > 0:
+        ap = sum(p for _, p in precisions_at_tp) / num_true
     
-    # Aggregate scores (ignore inf/-inf) - exact same logic as hypergeom_index_score
-    valid_scores = pairs_df["target_overlap_score"].replace([np.inf, -np.inf], np.nan)
-    valid_scores = valid_scores.dropna()
-    
-    if len(valid_scores) == 0:
-        final_score = 0.0
-    else:
-        if aggregation_method == "mean":
-            final_score = float(np.mean(valid_scores))
-        elif aggregation_method == "median":
-            final_score = float(np.median(valid_scores))
-        elif aggregation_method == "max":
-            final_score = float(np.max(valid_scores))
-        else:
-            final_score = float(np.mean(valid_scores))
-    
-    metadata = {
-        "input_module": sources,
-        "total_pairs": len(pairs),
-        "valid_pairs": int(len(valid_scores)),
-        "aggregation_method": aggregation_method,
-        "background_size": background_size,
-        "all_aggregations": {
-            "mean": float(np.mean(valid_scores)) if len(valid_scores) > 0 else 0.0,
-            "median": float(np.median(valid_scores)) if len(valid_scores) > 0 else 0.0,
-            "max": float(np.max(valid_scores)) if len(valid_scores) > 0 else 0.0,
-        },
+    return {
+        'max_k': len(source),
+        'values': pr_values,
+        'ap': ap,
+        'precisions_at_tp': precisions_at_tp,
+        'k_for_50_percent_recall': k_for_50_recall,
+        'k_for_90_percent_recall': k_for_90_recall,
+        'num_true_regulators': num_true,
+        'num_predictions': len(source)
     }
+
+
+def grn_set_metrics(
+    source: List[str],
+    target: str,
+    grn_data: pd.DataFrame
+) -> Dict:
+    """Calculate set-based metrics treating predictions as a single set.
+
+    Args:
+        source: Predicted regulator genes 
+        target: Target gene name (for validation/reference).
+        grn_data: Ground truth regulators for this target.
+            Must contain columns: ['regulator', 'target', 'score'].
+        beta: Beta parameter for F-beta score. Defaults to 1.0.
+            - beta=1.0 gives F1 score (equal weight to precision/recall)
+            - beta>1.0 weights recall higher
+            - beta<1.0 weights precision higher
+
+    Returns:
+        A dictionary containing:
+            - precision: Precision score (TP / (TP + FP)).
+            - recall: Recall score (TP / (TP + FN)).
+            - f1: F1 score (harmonic mean of precision and recall).
+            - jaccard: Jaccard index (intersection over union).
+            - tp: True positives count.
+            - fp: False positives count.
+            - fn: False negatives count.
+            - num_predicted: Number of predicted regulators.
+            - num_true: Number of true regulators.
+            - overlap: List of genes in both predicted and true sets.
+
+    """
     
-    return final_score, pairs_df
+    # Remove duplicates from source
+    source_set = set(source)
+    
+    # Get true regulators
+    true_regulators = set(grn_data['regulator'].values)
+    
+    # Calculate set intersections and differences
+    tp_set = source_set & true_regulators  # Intersection (correctly predicted)
+    fp_set = source_set - true_regulators  # Predicted but not true
+    fn_set = true_regulators - source_set  # True but not predicted
+    
+    tp = len(tp_set)
+    fp = len(fp_set)
+    fn = len(fn_set)
+    
+    num_predicted = len(source_set)
+    num_true = len(true_regulators)
+    
+    # Calculate precision and recall
+    precision = tp / num_predicted if num_predicted > 0 else 0.0
+    recall = tp / num_true if num_true > 0 else 0.0
+    
+    # Calculate F1 score (harmonic mean)
+    if precision + recall > 0:
+        f1 = 2 * (precision * recall) / (precision + recall)
+    else:
+        f1 = 0.0
+        
+    # Calculate Jaccard index (intersection over union)
+    union = source_set | true_regulators
+    jaccard = len(tp_set) / len(union) if len(union) > 0 else 0.0
+    
+    return {
+        'precision': precision,
+        'recall': recall,
+        'f1': f1,
+        'jaccard': jaccard,
+        'tp': tp,
+        'fp': fp,
+        'fn': fn,
+        'num_predicted': num_predicted,
+        'num_true': num_true,
+        'overlap': sorted(list(tp_set))
+    }
+
+
+def _get_GRN_for_target(
+    dataset: Dict,
+    grn_key: str,
+    target: str
+) -> pd.DataFrame:
+    """Retrieve and filter GRN data for a specific target gene.
+
+    Args:
+        dataset: Dictionary of loaded GRN datasets.
+        grn_key: Key identifying which GRN to use (e.g. 'collectri').
+        target: Target gene name to filter for.
+
+    Returns:
+        DataFrame with columns ['regulator', 'target', 'score'],
+        filtered to rows where target matches.
+    """
+    if dataset is None:
+        raise ValueError("dataset is None")
+    if grn_key is None:
+        raise ValueError("no grn_key provided")
+    if target is None:
+        raise ValueError("no target provided")
+
+    if grn_key == "collectri":
+        grn = dataset["collectri"].copy()
+        grn = grn.rename(columns={"source": "regulator"})
+        grn = grn[grn["target"] == target][["regulator", "target", "weight"]].rename(
+            columns={"weight": "score"}
+        )
+    else:
+        raise ValueError(f"invalid grn_key: '{grn_key}'")
+
+    if grn.empty:
+        raise ValueError(f"no GRN entries found for target '{target}' in '{grn_key}'")
+
+    return grn
 
 
 GRN_METHODS = {
-    'grn_target_overlap_score': {
-        'func': target_overlap_score,
+    'grn_precision_recall_collectri': {
+        'func': lambda sources, target, datasets=None, **kwargs:
+            grn_precision_recall(
+                sources,
+                target,
+                _get_GRN_for_target(datasets, 'collectri', target)
+            ),
         'datasets': ['collectri']
-    }
+    },
+    'grn_set_metrics_collectri': {
+        'func': lambda sources, target, datasets=None, **kwargs:
+            grn_set_metrics(
+                sources,
+                target,
+                _get_GRN_for_target(datasets, 'collectri', target)
+            ),
+        'datasets': ['collectri']
+    },
 }

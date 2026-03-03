@@ -14,13 +14,14 @@ Three semantic similarity methods are implemented using Best-Match Average (BMA)
 import numpy as np
 import pandas as pd
 from typing import Tuple, List, Optional, Callable
-
 from goatools.obo_parser import GODag
 from goatools.semantic import (
     TermCounts, lin_sim, resnik_sim,
     get_info_content, deepest_common_ancestor
 )
+
 from tfitpy.utils import generate_tf_pairs
+
 
 def _jc_sim(term1: str, term2: str, godag: GODag, termcounts: TermCounts) -> Optional[float]:
     """Jiang-Conrath similarity between two GO terms.
@@ -181,7 +182,6 @@ def _go_wrapper(method: str, sources: list, datasets: dict, pairs=None):
         raise ValueError("Dataset dependency missing: 'go'")
     godag      = datasets["go"]["godag"]
     gene2go    = datasets["go"]["gene2go"]
-    #termcounts = datasets["go"]["termcounts"]
     termcounts = TermCounts(godag, gene2go)
     return similarity_score(
         sources=sources,
@@ -192,33 +192,20 @@ def _go_wrapper(method: str, sources: list, datasets: dict, pairs=None):
         pairs=pairs,
     )
 
-
-def goa_lin_similarity(sources, datasets=None, pairs=None, **kwargs):
-    """Lin GO semantic similarity using the GOA human annotation database."""
-    return _go_wrapper("lin", sources, datasets, pairs)
-
-
-def goa_resnik_similarity(sources, datasets=None, pairs=None, **kwargs):
-    """Resnik GO semantic similarity using the GOA human annotation database."""
-    return _go_wrapper("resnik", sources, datasets, pairs)
-
-
-def goa_jc_similarity(sources, datasets=None, pairs=None, **kwargs):
-    """Jiang-Conrath GO semantic similarity using the GOA human annotation database."""
-    return _go_wrapper("jc", sources, datasets, pairs)
-
-
 GO_METHODS = {
     "goa_lin_similarity": {
-        "func": goa_lin_similarity,
+        "func": lambda sources, datasets=None, pairs=None, **kwargs: 
+            _go_wrapper("lin", sources, datasets, pairs),
         "datasets": ["go"],
     },
     "goa_resnik_similarity": {
-        "func": goa_resnik_similarity,
+        "func": lambda sources, datasets=None, pairs=None, **kwargs: 
+            _go_wrapper("resnik", sources, datasets, pairs),
         "datasets": ["go"],
     },
     "goa_jc_similarity": {
-        "func": goa_jc_similarity,
+        "func": lambda sources, datasets=None, pairs=None, **kwargs: 
+            _go_wrapper("jc", sources, datasets, pairs),
         "datasets": ["go"],
     },
 }

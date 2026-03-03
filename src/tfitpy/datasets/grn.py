@@ -17,14 +17,15 @@ def process_collectri(data_path):
 def load_collectri(data_path):
     """Returns load_collectri as a network"""
     edges = dc.op.collectri(organism='human')
-    G = nx.from_pandas_edgelist(
-        edges, 
-        source='source', 
-        target='target', 
-        edge_attr=True,  # preserve all columns as edge attributes
-        create_using=nx.DiGraph()
-    )
-    return G
+    # G = nx.from_pandas_edgelist(
+    #     edges, 
+    #     source='source', 
+    #     target='target', 
+    #     edge_attr=True,  # preserve all columns as edge attributes
+    #     create_using=nx.DiGraph()
+    # )
+    # return G
+    return edges
 
 
 GRN_DATASETS = {

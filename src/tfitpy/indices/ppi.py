@@ -260,75 +260,36 @@ def shortest_path_score(
     return final_score, pairs_df
 
 
-def _shortest_path_wrapper(db_key: str, sources, datasets, pairs=None):
-    """Shared logic for all per-database shortest-path wrappers."""
-    if datasets is None:
-        raise ValueError(
-            "datasets cache is required. Create cache with load_datasets() first.")
-    if db_key not in datasets:
-        raise ValueError(f"Dataset dependency missing: '{db_key}'")
-    return shortest_path_score(
-        sources=sources,
-        ppi_network=datasets[db_key],
-        pairs=pairs
-    )
-
-
-def shortest_path_score_hippie(
-        sources: list,
-        datasets=None,
-        pairs=None,
-        **kwargs
-):
-    """Shortest path proximity score using the HIPPIE PPI network."""
-    return _shortest_path_wrapper("hippie", sources, datasets, pairs)
-
-
-def shortest_path_score_stringdb(
-        sources: list,
-        datasets=None,
-        pairs=None,
-        **kwargs
-):
-    """Shortest path proximity score using the STRING PPI network."""
-    return _shortest_path_wrapper("stringdb", sources, datasets, pairs)
-
-
-def shortest_path_score_biogrid(
-        sources: list,
-        datasets=None,
-        pairs=None,
-        **kwargs
-):
-    """Shortest path proximity score using the BioGRID PPI network."""
-    return _shortest_path_wrapper("biogrid", sources, datasets, pairs)
-
-
 PPI_METHODS = {
     'shortest_PPI_path_score_hippie': {
-        'func': shortest_path_score_hippie,
+        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
+            shortest_path_score(sources, datasets['hippie'] if datasets else None, pairs),
         'datasets': ['hippie']
     },
-
     'shortest_PPI_path_score_stringdb': {
-        'func': shortest_path_score_stringdb,
-        'datasets': ['stringdb'],
+        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
+            shortest_path_score(sources, datasets['stringdb'] if datasets else None, pairs),
+        'datasets': ['stringdb']
     },
     'shortest_PPI_path_score_biogrid': {
-        'func': shortest_path_score_biogrid,
-        'datasets': ['biogrid'],
+        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
+            shortest_path_score(sources, datasets['biogrid'] if datasets else None, pairs),
+        'datasets': ['biogrid']
     },
-
+    
     'shared_PPI_partners_score_hippie': {
-        'func': shared_partners_hippie,
+        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
+            shared_partners(sources, datasets['hippie'] if datasets else None, pairs),
         'datasets': ['hippie']
     },
     'shared_PPI_partners_score_stringdb': {
-        'func': shared_partners_stringdb,
-        'datasets': ['stringdb'],
+        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
+            shared_partners(sources, datasets['stringdb'] if datasets else None, pairs),
+        'datasets': ['stringdb']
     },
     'shared_PPI_partners_score_biogrid': {
-        'func': shared_partners_biogrid,
-        'datasets': ['biogrid'],
+        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
+            shared_partners(sources, datasets['biogrid'] if datasets else None, pairs),
+        'datasets': ['biogrid']
     },
 }

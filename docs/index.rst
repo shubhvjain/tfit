@@ -11,7 +11,7 @@ TFitPy documentation
 
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
    :caption: Contents:
    
    tutorial1

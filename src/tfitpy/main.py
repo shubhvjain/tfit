@@ -99,23 +99,33 @@ def _compute_row_indices(row, methods, cache, options):
     row_dict = row.to_dict()
     row_dict["sources"] = row_dict["sources"].split(";")
     row_pairs = generate_tf_pairs(row_dict["sources"])
+    additional_data = {}
     for method_name in methods:
         method_config = METHODS[method_name]
         func = method_config['func']
         
         try:
             # Call method with row data and cache
-            result,pair_data = func(datasets=cache,pairs=row_pairs,**options,**row_dict)
-            row_dict[method_name] = round(result,5)
+            result = func(datasets=cache,pairs=row_pairs,**options,**row_dict)
+            if type(result)== tuple:
+                row_dict[method_name] = round(result[0],5)
+            elif type(result) == dict:
+                additional_data[method_name] = result
+                #row_dict[method_name] = result
         except Exception as e:
             print(e)
             print(f"Error in {method_name} for row {row.name}: {e}")
             row_dict[method_name] = None
-            raise e
-    row_dict["sources"] = ';'.join(row_dict["sources"])
-    return pd.Series(row_dict)
+            # raise e
+            pass
+    additional_data["sources"] = ';'.join(row_dict["sources"])
+    additional_data["target"] = row_dict["target"]
 
-def compute_indices(df, methods=None, data_path=None, n_jobs=-1,options={}):
+    row_dict["sources"] = ';'.join(row_dict["sources"])
+    print(additional_data,row_dict)
+    return pd.Series(row_dict),additional_data
+
+def compute_indices(df, methods=None, data_path=None, options={}):
     """
     Compute multiple indices/methods on a dataframe in parallel.
     
@@ -126,7 +136,8 @@ def compute_indices(df, methods=None, data_path=None, n_jobs=-1,options={}):
         n_jobs: Number of parallel jobs (-1 = all cores)
     
     Returns:
-        DataFrame with new columns for each method
+        Dictionary with cluster names as keys and their data as values.
+        Each value contains genes, target, and computed indices.
     """
     if df is None:
         raise ValueError("No dataframe provided")
@@ -143,18 +154,33 @@ def compute_indices(df, methods=None, data_path=None, n_jobs=-1,options={}):
     if missing_cols:
         raise ValueError(f"DataFrame missing required columns: {missing_cols}")
     
-    print(f"Computing {len(methods)} method(s) on {len(df)} rows using {n_jobs} jobs")
+    print(f"Computing {len(methods)} method(s) on {len(df)}")
     
-    # Load cache ONCE - shared read-only across all workers
+    # Load cache ONCE - shared in memory across threads
     cache = load_cache(methods=methods, data_path=data_path)
+    print("working on it...")
+    # Use threading backend to share cache in memory
+    # results = Parallel(n_jobs=n_jobs,backend='threading')(
+    #     delayed(_compute_row_indices)(row, methods, cache, options)
+    #     for idx, row in df.iterrows()
+    # )
+    results = []
+    additional_data = {}
+    for idx, row in df.iterrows():
+        result,add_data = _compute_row_indices(row, methods, cache, options)
+        results.append(result)
+        cluster_uid = row['cluster_uid'] 
+        additional_data[cluster_uid] = add_data
     
-    # Parallel processing
-    results = Parallel(n_jobs=1)(
-        delayed(_compute_row_indices)(row, methods, cache, options)
-        for idx, row in df.iterrows()
-    )
-    
-    result_df = pd.DataFrame(results)
-    
+    # Convert directly to dict
+    # result_dict = {}
+    # for series_result in results:
+    #     row_dict = series_result.to_dict()
+    #     cluster_uid = row_dict['cluster_uid']  
+    #     result_dict[cluster_uid] = row_dict
+
     print(f"Computation complete. Added {len(methods)} column(s)")
-    return result_df
+
+    
+    print(f"Done")
+    return pd.DataFrame(results) , additional_data

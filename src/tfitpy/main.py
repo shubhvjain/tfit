@@ -122,7 +122,7 @@ def _compute_row_indices(row, methods, cache, options):
     additional_data["target"] = row_dict["target"]
 
     row_dict["sources"] = ';'.join(row_dict["sources"])
-    print(additional_data,row_dict)
+    # print(additional_data,row_dict)
     return pd.Series(row_dict),additional_data
 
 def compute_indices(df, methods=None, data_path=None, options={}):

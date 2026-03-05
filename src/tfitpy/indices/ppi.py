@@ -263,33 +263,33 @@ def shortest_path_score(
 PPI_METHODS = {
     'shortest_PPI_path_score_hippie': {
         'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            shortest_path_score(sources, datasets['hippie'] if datasets else None, pairs),
+            ("df_column",shortest_path_score(sources, datasets['hippie'] if datasets else None, pairs)),
         'datasets': ['hippie']
     },
     'shortest_PPI_path_score_stringdb': {
         'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            shortest_path_score(sources, datasets['stringdb'] if datasets else None, pairs),
+            ("df_column",shortest_path_score(sources, datasets['stringdb'] if datasets else None, pairs)),
         'datasets': ['stringdb']
     },
     'shortest_PPI_path_score_biogrid': {
         'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            shortest_path_score(sources, datasets['biogrid'] if datasets else None, pairs),
+            ("df_column",shortest_path_score(sources, datasets['biogrid'] if datasets else None, pairs)),
         'datasets': ['biogrid']
     },
     
     'shared_PPI_partners_score_hippie': {
         'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            shared_partners(sources, datasets['hippie'] if datasets else None, pairs),
+            ("df_column",shared_partners(sources, datasets['hippie'] if datasets else None, pairs)),
         'datasets': ['hippie']
     },
     'shared_PPI_partners_score_stringdb': {
         'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            shared_partners(sources, datasets['stringdb'] if datasets else None, pairs),
+            ("df_column",shared_partners(sources, datasets['stringdb'] if datasets else None, pairs)),
         'datasets': ['stringdb']
     },
     'shared_PPI_partners_score_biogrid': {
         'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            shared_partners(sources, datasets['biogrid'] if datasets else None, pairs),
+            ("df_column",shared_partners(sources, datasets['biogrid'] if datasets else None, pairs)),
         'datasets': ['biogrid']
     },
 }

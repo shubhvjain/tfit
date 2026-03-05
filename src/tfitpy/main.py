@@ -103,15 +103,21 @@ def _compute_row_indices(row, methods, cache, options):
     for method_name in methods:
         method_config = METHODS[method_name]
         func = method_config['func']
-        
         try:
             # Call method with row data and cache
-            result = func(datasets=cache,pairs=row_pairs,**options,**row_dict)
-            if type(result)== tuple:
+            result_type, result = func(datasets=cache,pairs=row_pairs,**options,**row_dict)
+            if result_type== "df_column":
                 row_dict[method_name] = round(result[0],5)
-            elif type(result) == dict:
+            elif result_type== "json":
                 additional_data[method_name] = result
-                #row_dict[method_name] = result
+            elif result_type== "df_columns":
+                for key in result.keys():
+                    #print(key)
+                    val = result[key]
+                    if type(val) == "float":
+                        val = round(result[key],5)   
+                    #print(f"{method_name}_key") 
+                    row_dict[f"{method_name}_{key}"] = val
         except Exception as e:
             print(e)
             print(f"Error in {method_name} for row {row.name}: {e}")

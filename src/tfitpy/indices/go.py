@@ -195,17 +195,17 @@ def _go_wrapper(method: str, sources: list, datasets: dict, pairs=None):
 GO_METHODS = {
     "goa_lin_similarity": {
         "func": lambda sources, datasets=None, pairs=None, **kwargs: 
-            _go_wrapper("lin", sources, datasets, pairs),
+            ("df_column",_go_wrapper("lin", sources, datasets, pairs)),
         "datasets": ["go"],
     },
     "goa_resnik_similarity": {
         "func": lambda sources, datasets=None, pairs=None, **kwargs: 
-            _go_wrapper("resnik", sources, datasets, pairs),
+            ("df_column",_go_wrapper("resnik", sources, datasets, pairs)),
         "datasets": ["go"],
     },
     "goa_jc_similarity": {
         "func": lambda sources, datasets=None, pairs=None, **kwargs: 
-            _go_wrapper("jc", sources, datasets, pairs),
+            ("df_column",_go_wrapper("jc", sources, datasets, pairs)),
         "datasets": ["go"],
     },
 }

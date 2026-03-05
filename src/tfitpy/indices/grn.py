@@ -81,14 +81,10 @@ def grn_precision_recall(
     
     # Calculate Average Precision (AP)
     # AP is the sum of precisions at each true positive position divided by total true positives
-    ap = 0.0
-    if len(precisions_at_tp) > 0:
-        ap = sum(p for _, p in precisions_at_tp) / num_true
+
     
     return {
-        'max_k': len(source),
         'values': pr_values,
-        'ap': ap,
         'precisions_at_tp': precisions_at_tp,
         'k_for_50_percent_recall': k_for_50_recall,
         'k_for_90_percent_recall': k_for_90_recall,
@@ -165,13 +161,7 @@ def grn_set_metrics(
         'precision': precision,
         'recall': recall,
         'f1': f1,
-        'jaccard': jaccard,
-        'tp': tp,
-        'fp': fp,
-        'fn': fn,
-        'num_predicted': num_predicted,
-        'num_true': num_true,
-        'overlap': sorted(list(tp_set))
+        'jaccard': jaccard
     }
 
 
@@ -216,20 +206,20 @@ def _get_GRN_for_target(
 GRN_METHODS = {
     'grn_precision_recall_collectri': {
         'func': lambda sources, target, datasets=None, **kwargs:
-            grn_precision_recall(
+            ("json",grn_precision_recall(
                 sources,
                 target,
                 _get_GRN_for_target(datasets, 'collectri', target)
-            ),
+            )),
         'datasets': ['collectri']
     },
-    'grn_set_metrics_collectri': {
+    'grn_collectri': {
         'func': lambda sources, target, datasets=None, **kwargs:
-            grn_set_metrics(
+            ("df_columns",grn_set_metrics(
                 sources,
                 target,
                 _get_GRN_for_target(datasets, 'collectri', target)
-            ),
+            )),
         'datasets': ['collectri']
     },
 }

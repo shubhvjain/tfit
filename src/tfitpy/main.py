@@ -145,8 +145,8 @@ def compute_indices(df, methods=None, new_methods_only=True, data_path=None, opt
             return df, {}
 
     print(f"Computing {len(methods)} method(s) on {len(df)} rows")
-    print(df.columns)
-    print(methods)
+    #print(df.columns)
+    #print(methods)
     cache = load_cache(methods=methods, data_path=data_path)
     print("Working on it...")
 

@@ -206,20 +206,24 @@ def _get_GRN_for_target(
 GRN_METHODS = {
     'grn_precision_recall_collectri': {
         'func': lambda sources, target, datasets=None, **kwargs:
-            ("json",grn_precision_recall(
+           grn_precision_recall(
                 sources,
                 target,
                 _get_GRN_for_target(datasets, 'collectri', target)
-            )),
+            ),
+         "type":"json",
+        "cols":["grn_precision_recall_collectri"],
         'datasets': ['collectri']
     },
     'grn_collectri': {
         'func': lambda sources, target, datasets=None, **kwargs:
-            ("df_columns",grn_set_metrics(
+            grn_set_metrics(
                 sources,
                 target,
                 _get_GRN_for_target(datasets, 'collectri', target)
-            )),
+            ),
+        "type":"df_columns",
+        "cols":["grn_collectri_precision","grn_collectri_recall","grn_collectri_f1","grn_collectri_jaccard"],
         'datasets': ['collectri']
     },
 }

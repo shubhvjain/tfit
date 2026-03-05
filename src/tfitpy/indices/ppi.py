@@ -197,7 +197,7 @@ def shared_partners_biogrid(
 
 
 # =========|
-# Index 2 
+# Index 2
 # Shortest path score
 # =========|
 
@@ -255,41 +255,60 @@ def shortest_path_score(
         })
 
     pairs_df = pd.DataFrame(pair_results)
-    valid_scores = pairs_df['score'].replace([np.inf, -np.inf], np.nan).dropna()
+    valid_scores = pairs_df['score'].replace(
+        [np.inf, -np.inf], np.nan).dropna()
     final_score = np.mean(valid_scores) if len(valid_scores) > 0 else 0.0
     return final_score, pairs_df
 
 
 PPI_METHODS = {
     'shortest_PPI_path_score_hippie': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            ("df_column",shortest_path_score(sources, datasets['hippie'] if datasets else None, pairs)),
-        'datasets': ['hippie']
+        'func': lambda sources, datasets=None, pairs=None, **kwargs:
+            shortest_path_score(
+                sources, datasets['hippie'] if datasets else None, pairs),
+        'datasets': ['hippie'],
+        "type": "df_column",
+        "cols": ["shortest_PPI_path_score_hippie"],
     },
     'shortest_PPI_path_score_stringdb': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            ("df_column",shortest_path_score(sources, datasets['stringdb'] if datasets else None, pairs)),
-        'datasets': ['stringdb']
+        'func': lambda sources, datasets=None, pairs=None, **kwargs:
+            shortest_path_score(
+                sources, datasets['stringdb'] if datasets else None, pairs),
+        'datasets': ['stringdb'],
+        "type": "df_column",
+        "cols": ["shortest_PPI_path_score_stringdb"],
     },
     'shortest_PPI_path_score_biogrid': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            ("df_column",shortest_path_score(sources, datasets['biogrid'] if datasets else None, pairs)),
-        'datasets': ['biogrid']
+        'func': lambda sources, datasets=None, pairs=None, **kwargs:
+            shortest_path_score(
+                sources, datasets['biogrid'] if datasets else None, pairs),
+        'datasets': ['biogrid'],
+        "type": "df_column",
+        "cols": ["shortest_PPI_path_score_biogrid"],
     },
-    
+
     'shared_PPI_partners_score_hippie': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            ("df_column",shared_partners(sources, datasets['hippie'] if datasets else None, pairs)),
-        'datasets': ['hippie']
+        'func': lambda sources, datasets=None, pairs=None, **kwargs:
+            shared_partners(
+                sources, datasets['hippie'] if datasets else None, pairs),
+        'datasets': ['hippie'],
+        "type": "df_column",
+        "cols": ["shared_PPI_partners_score_hippie"],
     },
     'shared_PPI_partners_score_stringdb': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            ("df_column",shared_partners(sources, datasets['stringdb'] if datasets else None, pairs)),
-        'datasets': ['stringdb']
+        'func': lambda sources, datasets=None, pairs=None, **kwargs:
+            shared_partners(
+                sources, datasets['stringdb'] if datasets else None, pairs),
+        'datasets': ['stringdb'],
+        "type": "df_column",
+        "cols": ["shared_PPI_partners_score_stringdb"],
     },
     'shared_PPI_partners_score_biogrid': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs: 
-            ("df_column",shared_partners(sources, datasets['biogrid'] if datasets else None, pairs)),
-        'datasets': ['biogrid']
+        'func': lambda sources, datasets=None, pairs=None, **kwargs:
+            shared_partners(
+                sources, datasets['biogrid'] if datasets else None, pairs),
+        'datasets': ['biogrid'],
+        "type": "df_column",
+        "cols": ["shared_PPI_partners_score_biogrid"],
     },
 }

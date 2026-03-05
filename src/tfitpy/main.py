@@ -84,109 +84,79 @@ def load_cache(cache=None, methods=None, data_path=None):
 
 
 def _compute_row_indices(row, methods, cache, options):
-    """
-    Compute indices for a single row.
-    Cache is shared read-only across all workers.
-    
-    Args:
-        row: Single row (Series) from dataframe
-        methods: List of method names to compute
-        cache: Pre-loaded datasets (pickeable, read-only)
-    
-    Returns:
-        Row with new columns added
-    """
     row_dict = row.to_dict()
     row_dict["sources"] = row_dict["sources"].split(";")
     row_pairs = generate_tf_pairs(row_dict["sources"])
     additional_data = {}
+
     for method_name in methods:
         method_config = METHODS[method_name]
         func = method_config['func']
+        resp_type = method_config['type']
+        cols = method_config['cols']  # the final column names
+
         try:
-            # Call method with row data and cache
-            result_type, result = func(datasets=cache,pairs=row_pairs,**options,**row_dict)
-            if result_type== "df_column":
-                row_dict[method_name] = round(result[0],5)
-            elif result_type== "json":
+            result = func(datasets=cache, pairs=row_pairs, **options, **row_dict)
+
+            if resp_type == "df_column":
+                # single score — cols has exactly one entry
+                row_dict[cols[0]] = round(result[0], 5)
+
+            elif resp_type == "df_columns":
+                # flat dict returned — keys map 1:1 to cols in order
+                for col, val in zip(cols, result.values()):
+                    row_dict[col] = round(val, 5) if isinstance(val, float) else val
+
+            elif resp_type == "json":
                 additional_data[method_name] = result
-            elif result_type== "df_columns":
-                for key in result.keys():
-                    #print(key)
-                    val = result[key]
-                    if type(val) == "float":
-                        val = round(result[key],5)   
-                    #print(f"{method_name}_key") 
-                    row_dict[f"{method_name}_{key}"] = val
+
         except Exception as e:
-            print(e)
             print(f"Error in {method_name} for row {row.name}: {e}")
-            row_dict[method_name] = None
-            # raise e
-            pass
+            for col in cols:
+                row_dict[col] = float('nan')
+
     additional_data["sources"] = ';'.join(row_dict["sources"])
     additional_data["target"] = row_dict["target"]
-
     row_dict["sources"] = ';'.join(row_dict["sources"])
-    # print(additional_data,row_dict)
-    return pd.Series(row_dict),additional_data
 
-def compute_indices(df, methods=None, data_path=None, options={}):
-    """
-    Compute multiple indices/methods on a dataframe in parallel.
-    
-    Args:
-        df: Input dataframe with 'sources', 'target', etc.
-        methods: List of method names to compute (default: all methods)
-        data_path: Path where datasets are stored
-        n_jobs: Number of parallel jobs (-1 = all cores)
-    
-    Returns:
-        Dictionary with cluster names as keys and their data as values.
-        Each value contains genes, target, and computed indices.
-    """
+    return pd.Series(row_dict), additional_data
+
+def compute_indices(df, methods=None, new_methods_only=True, data_path=None, options={}):
     if df is None:
         raise ValueError("No dataframe provided")
-    
     if data_path is None:
         raise ValueError("data_path is required")
-    
     if methods is None:
         methods = list(METHODS.keys())
-    
-    # Validate required columns
+
     required_cols = ['sources', 'target']
     missing_cols = set(required_cols) - set(df.columns)
     if missing_cols:
         raise ValueError(f"DataFrame missing required columns: {missing_cols}")
-    
-    print(f"Computing {len(methods)} method(s) on {len(df)}")
-    
-    # Load cache ONCE - shared in memory across threads
+
+    # Filter out methods whose output columns are already in the dataframe
+    if new_methods_only:
+        methods = [
+            m for m in methods
+            if not any(col in df.columns for col in METHODS[m]['cols'])
+        ]
+        if not methods:
+            print("All requested columns already present in dataframe.")
+            return df, {}
+
+    print(f"Computing {len(methods)} method(s) on {len(df)} rows")
+    print(df.columns)
+    print(methods)
     cache = load_cache(methods=methods, data_path=data_path)
-    print("working on it...")
-    # Use threading backend to share cache in memory
-    # results = Parallel(n_jobs=n_jobs,backend='threading')(
-    #     delayed(_compute_row_indices)(row, methods, cache, options)
-    #     for idx, row in df.iterrows()
-    # )
+    print("Working on it...")
+
     results = []
     additional_data = {}
     for idx, row in df.iterrows():
-        result,add_data = _compute_row_indices(row, methods, cache, options)
+        result, add_data = _compute_row_indices(row, methods, cache, options)
         results.append(result)
-        cluster_uid = row['cluster_uid'] 
+        cluster_uid = row['cluster_uid']
         additional_data[cluster_uid] = add_data
-    
-    # Convert directly to dict
-    # result_dict = {}
-    # for series_result in results:
-    #     row_dict = series_result.to_dict()
-    #     cluster_uid = row_dict['cluster_uid']  
-    #     result_dict[cluster_uid] = row_dict
 
-    print(f"Computation complete. Added {len(methods)} column(s)")
-
-    
-    print(f"Done")
-    return pd.DataFrame(results) , additional_data
+    print(f"Done. Added columns for {len(methods)} method(s).")
+    return pd.DataFrame(results), additional_data

@@ -50,6 +50,7 @@ _SIM_FUNCS = {
     "jc": _jc_sim,
 }
 
+
 def _gene_sim_bma(
     gene1: str,
     gene2: str,
@@ -69,7 +70,7 @@ def _gene_sim_bma(
     for t1 in terms1:
         row = [s for t2 in terms2
                if t1 in godag and t2 in godag
-               and godag[t1].namespace == godag[t2].namespace   
+               and godag[t1].namespace == godag[t2].namespace
                if (s := sim_func(t1, t2, godag, termcounts)) is not None
                and not np.isnan(s)]
         if row:
@@ -78,13 +79,14 @@ def _gene_sim_bma(
     for t2 in terms2:
         col = [s for t1 in terms1
                if t1 in godag and t2 in godag
-               and godag[t1].namespace == godag[t2].namespace   
+               and godag[t1].namespace == godag[t2].namespace
                if (s := sim_func(t2, t1, godag, termcounts)) is not None
                and not np.isnan(s)]
         if col:
             best_matches.append(max(col))
 
     return float(np.mean(best_matches)) if best_matches else 0.0
+
 
 def similarity_score_pairwise(
     gene1: str,
@@ -112,7 +114,8 @@ def similarity_score_pairwise(
         ValueError: If method is not one of 'lin', 'resnik', 'jc'.
     """
     if method not in _SIM_FUNCS:
-        raise ValueError(f"Unknown method '{method}'. Choose from: {list(_SIM_FUNCS)}")
+        raise ValueError(
+            f"Unknown method '{method}'. Choose from: {list(_SIM_FUNCS)}")
     return _gene_sim_bma(gene1, gene2, gene2go, godag, termcounts, _SIM_FUNCS[method])
 
 
@@ -150,7 +153,8 @@ def similarity_score(
     if godag is None or gene2go is None:
         raise ValueError("godag and gene2go are required.")
     if method not in _SIM_FUNCS:
-        raise ValueError(f"Unknown method '{method}'. Choose from: {list(_SIM_FUNCS)}")
+        raise ValueError(
+            f"Unknown method '{method}'. Choose from: {list(_SIM_FUNCS)}")
     if termcounts is None:
         termcounts = TermCounts(godag, gene2go)
     if pairs is None:
@@ -158,7 +162,8 @@ def similarity_score(
 
     pair_results = []
     for g1, g2 in pairs:
-        score = similarity_score_pairwise(g1, g2, method, godag, gene2go, termcounts)
+        score = similarity_score_pairwise(
+            g1, g2, method, godag, gene2go, termcounts)
         pair_results.append({
             "tf1": g1,
             "tf2": g2,
@@ -168,44 +173,92 @@ def similarity_score(
         })
 
     pairs_df = pd.DataFrame(pair_results)
-    valid_scores = pairs_df["score"].replace([np.inf, -np.inf], np.nan).dropna()
-    final_score = float(np.mean(valid_scores)) if len(valid_scores) > 0 else 0.0
+    valid_scores = pairs_df["score"].replace(
+        [np.inf, -np.inf], np.nan).dropna()
+    final_score = float(np.mean(valid_scores)) if len(
+        valid_scores) > 0 else 0.0
     return final_score, pairs_df
 
 
-def _go_wrapper(method: str, sources: list, datasets: dict, pairs=None):
-    """Shared logic for all GO dataset-cache wrappers."""
-    if datasets is None:
-        raise ValueError(
-            "datasets cache is required. Create cache with load_datasets() first.")
-    if "go" not in datasets:
-        raise ValueError("Dataset dependency missing: 'go'")
-    godag      = datasets["go"]["godag"]
-    gene2go    = datasets["go"]["gene2go"]
-    termcounts = TermCounts(godag, gene2go)
-    return similarity_score(
-        sources=sources,
-        method=method,
-        godag=godag,
-        gene2go=gene2go,
-        termcounts=termcounts,
-        pairs=pairs,
-    )
+# def _go_wrapper(method: str, sources: list, datasets: dict, pairs=None):
+#     """Shared logic for all GO dataset-cache wrappers."""
+#     if datasets is None:
+#         raise ValueError(
+#             "datasets cache is required. Create cache with load_datasets() first.")
+#     if "go" not in datasets:
+#         raise ValueError("Dataset dependency missing: 'go'")
+#     godag      = datasets["go"]["godag"]
+#     gene2go    = datasets["go"]["gene2go"]
+#     termcounts = TermCounts(godag, gene2go)
+#     return similarity_score(
+#         sources=sources,
+#         method=method,
+#         godag=godag,
+#         gene2go=gene2go,
+#         termcounts=termcounts,
+#         pairs=pairs,
+#     )
+
+def _similarity_score_all(
+    sources: list,
+    godag: GODag,
+    gene2go: dict,
+    termcounts: TermCounts,
+    pairs=None,
+) -> dict:
+    """Compute all three GO similarity methods and return as a flat dict."""
+    results = {}
+    for method in ("lin", "resnik", "jc"):
+        score, _ = similarity_score(
+            sources=sources,
+            method=method,
+            godag=godag,
+            gene2go=gene2go,
+            termcounts=termcounts,
+            pairs=pairs,
+        )
+        results[f"goa_similarity_{method}"] = score
+    return results
+
 
 GO_METHODS = {
-    "goa_lin_similarity": {
-        "func": lambda sources, datasets=None, pairs=None, **kwargs: 
-            ("df_column",_go_wrapper("lin", sources, datasets, pairs)),
-        "datasets": ["go"],
-    },
-    "goa_resnik_similarity": {
-        "func": lambda sources, datasets=None, pairs=None, **kwargs: 
-            ("df_column",_go_wrapper("resnik", sources, datasets, pairs)),
-        "datasets": ["go"],
-    },
-    "goa_jc_similarity": {
-        "func": lambda sources, datasets=None, pairs=None, **kwargs: 
-            ("df_column",_go_wrapper("jc", sources, datasets, pairs)),
+    "goa_similarity": {
+        "func": lambda sources, datasets=None, pairs=None, **kwargs: (
+            _similarity_score_all(
+                sources=sources,
+                godag=datasets["go"]["godag"],
+                gene2go=datasets["go"]["gene2go"],
+                termcounts=TermCounts(
+                    datasets["go"]["godag"], datasets["go"]["gene2go"]),
+                pairs=pairs,
+            )
+        ),
+        "type": "df_columns",
+        "cols": ["goa_similarity_lin", "goa_similarity_resnik", "goa_similarity_jc"],
         "datasets": ["go"],
     },
 }
+
+# GO_METHODS = {
+#     "goa_lin_similarity": {
+#         "func": lambda sources, datasets=None, pairs=None, **kwargs:
+#             _go_wrapper("lin", sources, datasets, pairs),
+#         "type":"df_column",
+#         "cols":["goa_lin_similarity"],
+#         "datasets": ["go"],
+#     },
+#     "goa_resnik_similarity": {
+#         "func": lambda sources, datasets=None, pairs=None, **kwargs:
+#             _go_wrapper("resnik", sources, datasets, pairs),
+#         "type":"df_column",
+#         "cols":["goa_resnik_similarity"],
+#         "datasets": ["go"],
+#     },
+#     "goa_jc_similarity": {
+#         "type":"df_column",
+#         "cols":["goa_jc_similarity"],
+#         "func": lambda sources, datasets=None, pairs=None, **kwargs:
+#             _go_wrapper("jc", sources, datasets, pairs),
+#         "datasets": ["go"],
+#     },
+# }

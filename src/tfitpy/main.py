@@ -1,89 +1,77 @@
+import os
 import pandas as pd
-from joblib import Parallel, delayed
 from pathlib import Path
-from tfitpy.utils import generate_tf_pairs
+from multiprocessing import Pool, cpu_count
 
+from tfitpy.utils import generate_tf_pairs
 from tfitpy.datasets import DATASETS
-from tfitpy.indices import METHODS 
+from tfitpy.indices import METHODS
+
+# --- Module-level cache (one per worker process) ---
+_worker_cache = {}
+
+def _worker_init(methods: list, data_path: str):
+    """
+    Called once per worker process at pool startup.
+    Builds the dataset cache into the module-level _worker_cache dict.
+    Runs in the worker's own address space — no sharing across processes.
+    """
+    global _worker_cache
+    _worker_cache = load_cache(methods=methods, data_path=data_path)
 
 
 def load_cache(cache=None, methods=None, data_path=None):
     """
-    Load datasets into a key value cache variable for specified methods.
-    
-    This function can either create a new cache or add to an existing one.
-    It loads only the datasets required by the specified methods.
-    
+    Load datasets into a key-value cache for the specified methods.
+
     Args:
-        cache: Existing cache dict to update (optional). If None, creates new cache.
-        methods: List of method names that will be used. Loads their required datasets.
-        data_path: Path where datasets are stored (from setup_datasets)
-    
+        cache:     Existing cache dict to update. Creates a new one if None.
+        methods:   Method names whose required datasets should be loaded.
+                   Defaults to all known methods.
+        data_path: Directory where dataset files are stored.
+
     Returns:
-        Cache dict with loaded datasets
-        
-    Examples:
-        # Create new cache
-        cache = load_datasets(methods=['m1', 'm2'], data_path='./data')
-        
-        # Add more datasets to existing cache
-        load_datasets(cache, methods=['m3'], data_path='./data')
+        Cache dict mapping dataset name → loaded dataset object.
     """
-    # Create new cache if none provided
     if cache is None:
         cache = {}
-    
     if methods is None:
         methods = list(METHODS.keys())
-    
     if data_path is None:
-        raise ValueError("data_path parameter is required")
-    
+        raise ValueError("data_path is required")
+
     data_path = Path(data_path)
-    
-    # Validate methods exist
-    invalid_methods = set(methods) - set(METHODS.keys())
-    if invalid_methods:
-        raise ValueError(f"Unknown methods: {invalid_methods}")
-    
-    # Determine which datasets are needed
-    datasets_needed = set()
-    for method_name in methods:
-        method_config = METHODS[method_name]
-        datasets_needed.update(method_config['datasets'])
-    
-    # Filter out datasets already in cache
-    datasets_to_load = [ds for ds in datasets_needed if ds not in cache]
-    
-    if len(datasets_to_load) == 0:
-        print("All required datasets already loaded in cache")
+
+    invalid = set(methods) - set(METHODS.keys())
+    if invalid:
+        raise ValueError(f"Unknown methods: {invalid}")
+
+    needed = {ds for m in methods for ds in METHODS[m]["datasets"]}
+    to_load = [ds for ds in needed if ds not in cache]
+
+    if not to_load:
+        print("All required datasets already in cache.")
         return cache
-    
-    print(f"Loading {len(datasets_to_load)} dataset(s): {list(datasets_to_load)}")
-    print("=" * 60)
-    
-    # Load each dataset
-    for ds_name in datasets_to_load:
+
+    print(f"[pid {os.getpid()}] Loading {len(to_load)} dataset(s): {to_load}")
+    for ds_name in to_load:
         if ds_name not in DATASETS:
-            raise ValueError(f"Dataset '{ds_name}' not found in registry")
-        
-        ds_config = DATASETS[ds_name]
-        print(f"Loading {ds_name}...")
-        
+            raise ValueError(f"Dataset '{ds_name}' not found in registry.")
         try:
-            cache[ds_name] = ds_config['load'](data_path)
-            print(f"{ds_name} loaded")
+            cache[ds_name] = DATASETS[ds_name]["load"](data_path)
         except Exception as e:
-            print(f"{ds_name} failed to load: {e}")
-            raise
-    
-    print("=" * 60)
-    print(f"Cache now contains {len(cache)} dataset(s): {list(cache.keys())}")
-    
+            raise RuntimeError(f"Failed to load dataset '{ds_name}': {e}") from e
+
     return cache
 
 
 def _compute_row_indices(row, methods, cache, options):
+    """
+    Compute all requested method indices for a single DataFrame row.
+
+    Returns:
+        (pd.Series, dict)  — updated row series and any json-type side data.
+    """
     row_dict = row.to_dict()
     row_dict["sources"] = row_dict["sources"].split(";")
     row_pairs = generate_tf_pairs(row_dict["sources"])
@@ -91,72 +79,143 @@ def _compute_row_indices(row, methods, cache, options):
 
     for method_name in methods:
         method_config = METHODS[method_name]
-        func = method_config['func']
-        resp_type = method_config['type']
-        cols = method_config['cols']  # the final column names
+        func = method_config["func"]
+        resp_type = method_config["type"]
+        cols = method_config["cols"]
 
         try:
             result = func(datasets=cache, pairs=row_pairs, **options, **row_dict)
 
             if resp_type == "df_column":
-                # single score — cols has exactly one entry
                 row_dict[cols[0]] = round(result[0], 5)
 
             elif resp_type == "df_columns":
-                # flat dict returned — keys map 1:1 to cols in order
-                for col, val in zip(cols, result.values()):
+                for col in cols:
+                    val = result[col]
                     row_dict[col] = round(val, 5) if isinstance(val, float) else val
 
             elif resp_type == "json":
                 additional_data[method_name] = result
 
         except Exception as e:
-            print(f"Error in {method_name} for row {row.name}: {e}")
+            # print(f"Error in {method_name} for row {row.name}: {e}")
             for col in cols:
-                row_dict[col] = float('nan')
+                row_dict[col] = float("nan")
 
-    additional_data["sources"] = ';'.join(row_dict["sources"])
+    sources_str = ";".join(row_dict["sources"])
+    additional_data["sources"] = sources_str
     additional_data["target"] = row_dict["target"]
-    row_dict["sources"] = ';'.join(row_dict["sources"])
+    row_dict["sources"] = sources_str
 
     return pd.Series(row_dict), additional_data
 
-def compute_indices(df, methods=None, new_methods_only=True, data_path=None, options={}):
+
+def _process_chunk(args):
+    """
+    Worker entry point — processes a chunk of rows using the pre-built
+    module-level cache (_worker_cache).  No cache is passed in; it lives
+    in the worker's own memory from _worker_init.
+
+    Args:
+        args: (chunk_df, methods, options)
+
+    Returns:
+        (list[pd.Series], dict)  — row results and aggregated additional data.
+    """
+    chunk_df, methods, options = args
+    results = []
+    additional_data = {}
+
+    for _, row in chunk_df.iterrows():
+        series, add_data = _compute_row_indices(row, methods, _worker_cache, options)
+        results.append(series)
+        cluster_uid = row["cluster_uid"]
+        additional_data[cluster_uid] = add_data
+
+    return results, additional_data
+
+
+def compute_indices(
+    df,
+    methods=None,
+    new_methods_only=True,
+    data_path=None,
+    options={},
+    n_jobs=None,
+):
+    """
+    Compute index columns for every row of *df* in parallel.
+
+    Each worker process builds its own independent dataset cache on startup
+    (via the pool initializer), so datasets are never pickled or shared across
+    process boundaries.  The DataFrame is split into one chunk per worker and
+    distributed via starmap.
+
+    Args:
+        df:              Input DataFrame. Must contain 'sources', 'target',
+                         and 'cluster_uid' columns.
+        methods:         Method names to run. Defaults to all known methods.
+        new_methods_only: Skip methods whose output columns already exist in df.
+        data_path:       Path to dataset files (required).
+        options:         Extra keyword arguments forwarded to each method func.
+        n_jobs:          Number of worker processes. Defaults to cpu_count().
+
+    Returns:
+        (pd.DataFrame, dict)  — augmented DataFrame and merged additional_data.
+    """
     if df is None:
-        raise ValueError("No dataframe provided")
+        raise ValueError("No dataframe provided.")
     if data_path is None:
-        raise ValueError("data_path is required")
+        raise ValueError("data_path is required.")
     if methods is None:
         methods = list(METHODS.keys())
 
-    required_cols = ['sources', 'target']
-    missing_cols = set(required_cols) - set(df.columns)
-    if missing_cols:
-        raise ValueError(f"DataFrame missing required columns: {missing_cols}")
+    for col in ("sources", "target"):
+        if col not in df.columns:
+            raise ValueError(f"DataFrame missing required column: '{col}'")
 
-    # Filter out methods whose output columns are already in the dataframe
     if new_methods_only:
         methods = [
             m for m in methods
-            if not any(col in df.columns for col in METHODS[m]['cols'])
+            if not any(col in df.columns for col in METHODS[m]["cols"])
         ]
         if not methods:
-            print("All requested columns already present in dataframe.")
+            print("All requested columns already present — nothing to compute.")
             return df, {}
 
-    print(f"Computing {len(methods)} method(s) on {len(df)} rows")
-    #print(df.columns)
-    #print(methods)
-    cache = load_cache(methods=methods, data_path=data_path)
-    print("Working on it...")
+    n_workers = min(n_jobs or cpu_count(), len(df))
+    print(f"Computing {len(methods)} method(s) on {len(df)} rows "
+          f"using {n_workers} worker(s).")
 
-    results = []
-    additional_data = {}
-    for idx, row in df.iterrows():
-        result, add_data = _compute_row_indices(row, methods, cache, options)
-        results.append(result)
-        cluster_uid = row['cluster_uid']
-        additional_data[cluster_uid] = add_data
+    # Split into one chunk per worker; leftover rows go into the last chunk.
+    chunks = [chunk for chunk in _split_dataframe(df, n_workers) if not chunk.empty]
+
+    chunk_args = [(chunk, methods, options) for chunk in chunks]
+
+    with Pool(
+        processes=n_workers,
+        initializer=_worker_init,
+        initargs=(methods, str(data_path)),
+    ) as pool:
+        outcomes = pool.map(_process_chunk, chunk_args)
+
+    # Merge results from all workers
+    all_rows = []
+    merged_additional: dict = {}
+    for rows, add_data in outcomes:
+        all_rows.extend(rows)
+        merged_additional.update(add_data)
 
     print(f"Done. Added columns for {len(methods)} method(s).")
-    return pd.DataFrame(results), additional_data
+    return pd.DataFrame(all_rows), merged_additional
+
+
+# -----------
+# Helper
+# -----------
+
+def _split_dataframe(df: pd.DataFrame, n: int):
+    """Yield *n* roughly equal sub-DataFrames."""
+    size = max(1, len(df) // n)
+    for start in range(0, len(df), size):
+        yield df.iloc[start: start + size]

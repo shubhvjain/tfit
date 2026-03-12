@@ -120,14 +120,14 @@ def load_go(data_path):
             f"Symbol cache not found: {cache_path}. Run process_go() first."
         )
 
-    print("Loading GO ontology …")
+    #print("Loading GO ontology …")
     godag = GODag(str(obo_path), optional_attrs={"relationship"})
-    print(f"  {len(godag):,} GO terms loaded")
+    #print(f"  {len(godag):,} GO terms loaded")
 
-    print("Loading gene2go symbol cache …")
+    #print("Loading gene2go symbol cache …")
     with open(cache_path) as f:
         gene2go = {k: set(v) for k, v in json.load(f).items()}
-    print(f"  {len(gene2go):,} genes with GO annotations loaded")
+    #print(f"  {len(gene2go):,} genes with GO annotations loaded")
 
     return {"godag": godag, "gene2go": gene2go}
 

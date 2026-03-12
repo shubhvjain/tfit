@@ -261,54 +261,156 @@ def shortest_path_score(
     return final_score, pairs_df
 
 
+# =========|
+# Optimized: single-pass all PPI scores
+# =========|
+ 
+_PPI_DB_KEYS = ["hippie", "stringdb", "biogrid"]
+ 
+def _ppi_single_pass(
+    pairs: list,
+    graph: nx.Graph,
+    background_size: int,
+) -> Tuple[float, float]:
+    """Single pass over pairs computing both shortest-path and shared-partners scores.
+ 
+    For each pair, computes:
+      - shortest path proximity score: 1/length (0.0 if no path)
+      - shared partners hypergeometric score: -log10(p) (0.0 if no overlap)
+ 
+    Uses a row-level neighbor cache so each TF's neighbor set is fetched
+    only once per call, regardless of how many pairs it appears in.
+ 
+    Args:
+        pairs: List of (tf1, tf2) tuples.
+        graph: NetworkX PPI graph for this database.
+        background_size: Number of nodes in graph, used as hypergeometric N.
+ 
+    Returns:
+        Tuple of (shortest_path_score, shared_partners_score) — both are
+        means across valid pairs, 0.0 if no valid scores exist.
+    """
+    # Row-level neighbor cache: avoids recomputing set(G.neighbors(tf))
+    # for TFs that appear in multiple pairs within this row.
+    neighbor_cache: dict = {}
+ 
+    path_scores = []
+    partner_scores = []
+ 
+    for tf1, tf2 in pairs:
+ 
+        # --- shortest path ---
+        if tf1 not in graph or tf2 not in graph:
+            path_scores.append(0.0)
+        else:
+            try:
+                length = nx.shortest_path_length(graph, tf1, tf2)
+                path_scores.append(1.0 / length if length > 0 else 1.0)
+            except nx.NetworkXNoPath:
+                path_scores.append(0.0)
+ 
+        # --- shared partners (neighbor sets cached at row level) ---
+        if tf1 not in neighbor_cache:
+            neighbor_cache[tf1] = (
+                set(graph.neighbors(tf1)) if tf1 in graph else set()
+            )
+        if tf2 not in neighbor_cache:
+            neighbor_cache[tf2] = (
+                set(graph.neighbors(tf2)) if tf2 in graph else set()
+            )
+ 
+        n1 = neighbor_cache[tf1]
+        n2 = neighbor_cache[tf2]
+        N1, N2 = len(n1), len(n2)
+        c = len(n1 & n2)
+ 
+        if N1 == 0 or N2 == 0 or c == 0:
+            partner_scores.append(0.0)
+        else:
+            P = _hypergeometric_pvalue(background_size, N1, N2, c)
+            S = float("inf") if P <= 0.0 else -np.log10(P)
+            partner_scores.append(S)
+ 
+    # Aggregate: mean over valid (finite, non-nan) scores
+    def _safe_mean(values: list) -> float:
+        arr = np.array(values, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        return float(np.mean(arr)) if len(arr) > 0 else 0.0
+ 
+    return _safe_mean(path_scores), _safe_mean(partner_scores)
+ 
+ 
+def ppi_all_scores(
+    sources: list,
+    datasets: dict = None,
+    pairs: list = None,
+    **kwargs,
+) -> dict:
+    """Compute all 6 PPI scores in a single pass per database.
+ 
+    For each of the three PPI databases (hippie, stringdb, biogrid), makes
+    one pass over all TF pairs to compute both the shortest-path proximity
+    score and the shared-partners hypergeometric score simultaneously.
+ 
+    This is equivalent to calling shortest_path_score and shared_partners
+    separately for each database, but with half the graph traversals.
+ 
+    Args:
+        sources: List of source TF identifiers in the regulatory module.
+        datasets: Dataset cache dict containing 'hippie', 'stringdb', 'biogrid'
+                  NetworkX graphs. Must be provided.
+        pairs: Optional precomputed list of (tf1, tf2) tuples. If None,
+               generated from sources via generate_tf_pairs().
+ 
+    Returns:
+        Dict with 6 keys:
+            shortest_PPI_path_score_hippie
+            shortest_PPI_path_score_stringdb
+            shortest_PPI_path_score_biogrid
+            shared_PPI_partners_score_hippie
+            shared_PPI_partners_score_stringdb
+            shared_PPI_partners_score_biogrid
+ 
+    Raises:
+        ValueError: If datasets is None or any required db key is missing.
+    """
+    if datasets is None:
+        raise ValueError(
+            "datasets cache is required. Create cache with load_datasets() first.")
+ 
+    missing = [k for k in _PPI_DB_KEYS if k not in datasets]
+    if missing:
+        raise ValueError(f"Dataset dependencies missing: {missing}")
+ 
+    if pairs is None:
+        pairs = generate_tf_pairs(sources)
+ 
+    results = {}
+ 
+    for db_key in _PPI_DB_KEYS:
+        graph = datasets[db_key]
+        background_size = len(graph.nodes())
+ 
+        path_score, partner_score = _ppi_single_pass(pairs, graph, background_size)
+ 
+        results[f"shortest_PPI_path_score_{db_key}"] = round(path_score, 5)
+        results[f"shared_PPI_partners_score_{db_key}"] = round(partner_score, 5)
+ 
+    return results
+ 
+ 
 PPI_METHODS = {
-    'shortest_PPI_path_score_hippie': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs:
-            shortest_path_score(
-                sources, datasets['hippie'] if datasets else None, pairs),
-        'datasets': ['hippie'],
-        "type": "df_column",
-        "cols": ["shortest_PPI_path_score_hippie"],
-    },
-    'shortest_PPI_path_score_stringdb': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs:
-            shortest_path_score(
-                sources, datasets['stringdb'] if datasets else None, pairs),
-        'datasets': ['stringdb'],
-        "type": "df_column",
-        "cols": ["shortest_PPI_path_score_stringdb"],
-    },
-    'shortest_PPI_path_score_biogrid': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs:
-            shortest_path_score(
-                sources, datasets['biogrid'] if datasets else None, pairs),
-        'datasets': ['biogrid'],
-        "type": "df_column",
-        "cols": ["shortest_PPI_path_score_biogrid"],
-    },
-
-    'shared_PPI_partners_score_hippie': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs:
-            shared_partners(
-                sources, datasets['hippie'] if datasets else None, pairs),
-        'datasets': ['hippie'],
-        "type": "df_column",
-        "cols": ["shared_PPI_partners_score_hippie"],
-    },
-    'shared_PPI_partners_score_stringdb': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs:
-            shared_partners(
-                sources, datasets['stringdb'] if datasets else None, pairs),
-        'datasets': ['stringdb'],
-        "type": "df_column",
-        "cols": ["shared_PPI_partners_score_stringdb"],
-    },
-    'shared_PPI_partners_score_biogrid': {
-        'func': lambda sources, datasets=None, pairs=None, **kwargs:
-            shared_partners(
-                sources, datasets['biogrid'] if datasets else None, pairs),
-        'datasets': ['biogrid'],
-        "type": "df_column",
-        "cols": ["shared_PPI_partners_score_biogrid"],
+    "ppi": {
+        "func": ppi_all_scores,
+        "datasets": ["hippie", "stringdb", "biogrid"],
+        "type": "df_columns",
+        "cols": [
+            "shortest_PPI_path_score_hippie",
+            "shortest_PPI_path_score_stringdb",
+            "shortest_PPI_path_score_biogrid",
+            "shared_PPI_partners_score_hippie",
+            "shared_PPI_partners_score_stringdb",
+            "shared_PPI_partners_score_biogrid",
+        ],
     },
 }

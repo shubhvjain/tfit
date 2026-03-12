@@ -243,7 +243,7 @@ def load_stringdb(data_path):
         edge_attr=edge_attr,
     )
 
-    print(f"STRING graph: {G.number_of_nodes():,} nodes, {G.number_of_edges():,} edges")
+    #print(f"STRING graph: {G.number_of_nodes():,} nodes, {G.number_of_edges():,} edges")
     return G
 
 
@@ -395,7 +395,7 @@ def load_biogrid(data_path):
         edge_attr=edge_attr,
     )
 
-    print(f"BioGRID graph: {G.number_of_nodes():,} nodes, {G.number_of_edges():,} edges")
+    #print(f"BioGRID graph: {G.number_of_nodes():,} nodes, {G.number_of_edges():,} edges")
     return G
 
 

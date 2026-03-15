@@ -192,7 +192,7 @@ def load(data_path):
     return df
 
 
-def download():
+def download(data_path):
     """nothing here. just a placeholder"""
     return
 

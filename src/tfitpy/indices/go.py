@@ -255,6 +255,50 @@ def _similarity_score_all(
 # Optimized: single-pass all GO scores
 # =========|
 
+def _go_scores_from_cache(sources: list, pairs: list, cache: pd.DataFrame) -> dict:
+    """Extract GO scores from precomputed cache and aggregate."""
+    
+    if pairs is None:
+        pairs = generate_tf_pairs(sources)
+    
+    # Create a set for faster lookup
+    pair_set = {tuple(sorted([g1, g2])) for g1, g2 in pairs}
+    
+    # Filter cache to matching pairs
+    # Cache has pairs in alphabetical order (gene1, gene2)
+    mask = cache.apply(
+        lambda row: (row['gene1'], row['gene2']) in pair_set,
+        axis=1
+    )
+    relevant_rows = cache[mask]
+    
+    if len(relevant_rows) == 0:
+        # No matching pairs found - return zeros
+        return {
+            "goa_similarity_lin": 0.0,
+            "goa_similarity_resnik": 0.0,
+            "goa_similarity_jc": 0.0,
+        }
+    
+    # Aggregate scores (mean, ignoring inf/nan)
+    results = {}
+    
+    for method in ["lin", "resnik", "jc"]:
+        col = f'goa_similarity_{method}'
+        
+        # Get valid scores
+        scores = relevant_rows[col].replace(
+            [np.inf, -np.inf], np.nan
+        ).dropna()
+        
+        # Compute mean
+        results[col] = round(
+            float(scores.mean()) if len(scores) > 0 else 0.0,
+            5
+        )
+    
+    return results
+
 def go_all_scores(
     sources: list,
     datasets: dict = None,
@@ -286,6 +330,14 @@ def go_all_scores(
     Raises:
         ValueError: If datasets is None or 'go' key is missing.
     """
+
+        # Check if we have the cache
+    if datasets is not None and 'pairwise_score_cache' in datasets:
+        # Fast path: use cache
+        cache = datasets['pairwise_score_cache']
+        #print("using fastcache for GO")
+        return _go_scores_from_cache(sources, pairs, cache)
+        
     if datasets is None:
         raise ValueError(
             "datasets cache is required. Create cache with load_datasets() first.")
@@ -343,6 +395,6 @@ GO_METHODS = {
         "func": go_all_scores,
         "type": "df_columns",
         "cols": ["goa_similarity_lin", "goa_similarity_resnik", "goa_similarity_jc"],
-        "datasets": ["go"],
+        "datasets": ["pairwise_score_cache"],
     },
 }

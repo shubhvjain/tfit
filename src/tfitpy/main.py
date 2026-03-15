@@ -198,6 +198,8 @@ def compute_indices(
         initargs=(methods, str(data_path)),
     ) as pool:
         outcomes = pool.map(_process_chunk, chunk_args)
+        pool.close()
+        pool.join()
 
     # Merge results from all workers
     all_rows = []

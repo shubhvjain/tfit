@@ -339,6 +339,62 @@ def _ppi_single_pass(
  
     return _safe_mean(path_scores), _safe_mean(partner_scores)
  
+
+def _ppi_scores_from_cache(sources: list, pairs: list, cache: pd.DataFrame) -> dict:
+    """Extract PPI scores from precomputed cache and aggregate."""
+    from tfitpy.utils import generate_tf_pairs
+    
+    if pairs is None:
+        pairs = generate_tf_pairs(sources)
+    
+    # Create a set for faster lookup
+    pair_set = {tuple(sorted([g1, g2])) for g1, g2 in pairs}
+    
+    # Filter cache to matching pairs
+    # Cache has pairs in alphabetical order (gene1, gene2)
+    mask = cache.apply(
+        lambda row: (row['gene1'], row['gene2']) in pair_set,
+        axis=1
+    )
+    relevant_rows = cache[mask]
+    
+    if len(relevant_rows) == 0:
+        # No matching pairs found - return zeros
+        return {
+            "shortest_PPI_path_score_hippie": 0.0,
+            "shortest_PPI_path_score_stringdb": 0.0,
+            "shortest_PPI_path_score_biogrid": 0.0,
+            "shared_PPI_partners_score_hippie": 0.0,
+            "shared_PPI_partners_score_stringdb": 0.0,
+            "shared_PPI_partners_score_biogrid": 0.0,
+        }
+    
+    # Aggregate scores (mean, ignoring inf/nan)
+    results = {}
+    
+    for db_key in ["hippie", "stringdb", "biogrid"]:
+        path_col = f'shortest_PPI_path_score_{db_key}'
+        partner_col = f'shared_PPI_partners_score_{db_key}'
+        
+        # Get valid scores
+        path_scores = relevant_rows[path_col].replace(
+            [np.inf, -np.inf], np.nan
+        ).dropna()
+        partner_scores = relevant_rows[partner_col].replace(
+            [np.inf, -np.inf], np.nan
+        ).dropna()
+        
+        # Compute means
+        results[path_col] = round(
+            float(path_scores.mean()) if len(path_scores) > 0 else 0.0,
+            5
+        )
+        results[partner_col] = round(
+            float(partner_scores.mean()) if len(partner_scores) > 0 else 0.0,
+            5
+        )
+    
+    return results
  
 def ppi_all_scores(
     sources: list,
@@ -374,6 +430,13 @@ def ppi_all_scores(
     Raises:
         ValueError: If datasets is None or any required db key is missing.
     """
+        # Check if we have the cache
+    if datasets is not None and 'pairwise_score_cache' in datasets:
+        # Fast path: use cache
+        cache = datasets['pairwise_score_cache']
+        #print("using fastcache")
+        return _ppi_scores_from_cache(sources, pairs, cache)
+    
     if datasets is None:
         raise ValueError(
             "datasets cache is required. Create cache with load_datasets() first.")
@@ -402,7 +465,7 @@ def ppi_all_scores(
 PPI_METHODS = {
     "ppi": {
         "func": ppi_all_scores,
-        "datasets": ["hippie", "stringdb", "biogrid"],
+        "datasets": ["pairwise_score_cache"],
         "type": "df_columns",
         "cols": [
             "shortest_PPI_path_score_hippie",

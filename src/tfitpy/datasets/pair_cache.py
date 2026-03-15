@@ -189,6 +189,7 @@ def load(data_path):
     """
     cache_file = Path(data_path)/"pairwise_score_cache.parquet"
     df = pd.read_parquet(cache_file)
+    df = df.set_index(['gene1', 'gene2'])
     return df
 
 

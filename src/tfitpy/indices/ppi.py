@@ -347,27 +347,25 @@ def _ppi_scores_from_cache(sources: list, pairs: list, cache: pd.DataFrame) -> d
     if pairs is None:
         pairs = generate_tf_pairs(sources)
     
-    # Create a set for faster lookup
-    pair_set = {tuple(sorted([g1, g2])) for g1, g2 in pairs}
+    # Convert to sorted tuples for index lookup
+    pair_tuples = [tuple(sorted([g1, g2])) for g1, g2 in pairs]
     
-    # Filter cache to matching pairs
-    # Cache has pairs in alphabetical order (gene1, gene2)
-    mask = cache.apply(
-        lambda row: (row['gene1'], row['gene2']) in pair_set,
-        axis=1
-    )
-    relevant_rows = cache[mask]
-    
-    if len(relevant_rows) == 0:
-        # No matching pairs found - return zeros
-        return {
-            "shortest_PPI_path_score_hippie": 0.0,
-            "shortest_PPI_path_score_stringdb": 0.0,
-            "shortest_PPI_path_score_biogrid": 0.0,
-            "shared_PPI_partners_score_hippie": 0.0,
-            "shared_PPI_partners_score_stringdb": 0.0,
-            "shared_PPI_partners_score_biogrid": 0.0,
-        }
+    # Fast index-based lookup using .loc with list of tuples
+    try:
+        relevant_rows = cache.loc[pair_tuples]
+    except KeyError:
+        # Some pairs not in cache - filter to existing ones
+        existing_pairs = [p for p in pair_tuples if p in cache.index]
+        if not existing_pairs:
+            return {
+                "shortest_PPI_path_score_hippie": 0.0,
+                "shortest_PPI_path_score_stringdb": 0.0,
+                "shortest_PPI_path_score_biogrid": 0.0,
+                "shared_PPI_partners_score_hippie": 0.0,
+                "shared_PPI_partners_score_stringdb": 0.0,
+                "shared_PPI_partners_score_biogrid": 0.0,
+            }
+        relevant_rows = cache.loc[existing_pairs]
     
     # Aggregate scores (mean, ignoring inf/nan)
     results = {}

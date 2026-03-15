@@ -6,12 +6,17 @@ from tfitpy.datasets.grn import GRN_DATASETS
 from tfitpy.datasets.ppi import PPI_DATASETS
 from tfitpy.datasets.gene_names import GENE_DATASETS
 from tfitpy.datasets.go import GO_DATASET
+from tfitpy.datasets.tf import TF_DATASET
+from tfitpy.datasets.pair_cache import PAIRWISE_CACHE
+
 
 DATASETS = {
     **GENE_DATASETS,
     **GRN_DATASETS,
     **PPI_DATASETS,
     **GO_DATASET,
+    **TF_DATASET,
+    **PAIRWISE_CACHE
 }
 
 FIRST_ORDER = ["biomart", "gencode"]

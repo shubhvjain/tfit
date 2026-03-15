@@ -129,7 +129,7 @@ def build(data_path, rerun=False, n_jobs=4,batch_size=5000):
             print("Rebuilding cache...")
 
     tf = load_tflist(data_path)
-    tflist = tf["gene_name"].tolist()[0:5]
+    tflist = tf["gene_name"].tolist()
     print(f"Number of TFs: {len(tflist)}")
 
     

@@ -6,8 +6,8 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'TFit'
-copyright = '2025, Shubh Vardhan Jain'
+project = 'TFitPy'
+copyright = '2026, Shubh Vardhan Jain'
 author = 'Shubh Vardhan Jain'
 
 # -- General configuration ---------------------------------------------------
@@ -20,6 +20,7 @@ extensions = [
     'sphinx_autodoc_typehints',
     'sphinx.ext.autosummary', 
     'myst_nb',
+    'sphinxcontrib.bibtex'
 ]
 
 # MyST-NB configuration
@@ -37,6 +38,7 @@ source_suffix = {
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
+bibtex_bibfiles = ['references.bib']
 
 
 # -- Options for HTML output -------------------------------------------------

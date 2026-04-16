@@ -3,10 +3,12 @@ import pooch
 import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from pyfaidx import Fasta
 
 GENCODE_ATTRIBUTES = [
     'gene_id', 'transcript_id', 'gene_type',
-    'gene_name', 'transcript_name', 'protein_id', 'exon_id'
+    'gene_name', 'transcript_name', 'protein_id', 'exon_id',
+    'chromosome', 'feature', 'start', 'end', 'strand', 'tss',
 ]
 
 GENCODE = {
@@ -15,24 +17,42 @@ GENCODE = {
     "GTF_FILE_GZ": "gencode.v39.primary_assembly.annotation.gtf.gz",
     "FINAL_FILE": "gene_name_mapping.db",
     "URL": "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_39/gencode.v39.primary_assembly.annotation.gtf.gz",
+    "FASTA_FILE": "GRCh38.primary_assembly.genome.fa",
+    "FASTA_FILE_GZ": "GRCh38.primary_assembly.genome.fa.gz",
+    "URL_FASTA": "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_39/GRCh38.primary_assembly.genome.fa.gz",
 }
 
 
 def download_gencode(data_path, rerun=False):
-    """Download and decompress GENCODE GTF annotation file"""
+    """Download and decompress GENCODE GTF annotation and genome FASTA."""
     raw_path = Path(data_path) / GENCODE["FOLDER"]
     raw_path.mkdir(parents=True, exist_ok=True)
 
-    file_path = pooch.retrieve(
-        url=GENCODE["URL"],
-        known_hash=None,
-        path=raw_path,
-        fname=GENCODE["GTF_FILE_GZ"],
-        processor=pooch.Decompress(name=GENCODE["GTF_FILE"])
-    )
+    gtf_file = raw_path / GENCODE["GTF_FILE"]
+    if not gtf_file.exists() or rerun:
+        pooch.retrieve(
+            url=GENCODE["URL"],
+            known_hash=None,
+            path=raw_path,
+            fname=GENCODE["GTF_FILE_GZ"],
+            processor=pooch.Decompress(name=GENCODE["GTF_FILE"])
+        )
+        print(f"Downloaded GTF to {gtf_file}")
+    else:
+        print(f"GTF already exists: {gtf_file}")
 
-    print(f"Downloaded GENCODE GTF to {file_path}")
-    return file_path
+    fasta_file = raw_path / GENCODE["FASTA_FILE"]
+    if not fasta_file.exists() or rerun:
+        pooch.retrieve(
+            url=GENCODE["URL_FASTA"],
+            known_hash=None,
+            path=raw_path,
+            fname=GENCODE["FASTA_FILE_GZ"],
+            processor=pooch.Decompress(name=GENCODE["FASTA_FILE"])
+        )
+        print(f"Downloaded FASTA to {fasta_file}")
+    else:
+        print(f"FASTA already exists: {fasta_file}")
 
 
 def generate_kv(inp):
@@ -45,7 +65,8 @@ def generate_kv(inp):
 
 
 def process_line(line):
-    attribute_str = line.replace('\n', "").split('\t')[-1].replace("'", ' ')
+    fields = line.replace('\n', '').split('\t')
+    attribute_str = fields[8].replace("'", ' ')
     items = attribute_str.split(";")
     result = {}
     for item in items:
@@ -53,6 +74,18 @@ def process_line(line):
         if pair:
             k, v = pair
             result[k] = v
+
+    strand = fields[6]
+    start  = int(fields[3])
+    end    = int(fields[4])
+
+    result['chromosome'] = fields[0]
+    result['feature']    = fields[2]
+    result['start']      = start
+    result['end']        = end
+    result['strand']     = strand
+    result['tss']        = start if strand == '+' else end
+
     return result
 
 
@@ -116,7 +149,12 @@ def load_gencode(data_path):
         raise FileNotFoundError(f"{GENCODE['FINAL_FILE']} not found. Run process_gencode() first.")
     return sqlite3.connect(db_path)
 
-
+def load_genome(data_path):
+    """
+    """
+    fasta_path = Path(data_path) / GENCODE["FOLDER"] / GENCODE["FASTA_FILE"]
+    genome = Fasta(str(fasta_path))
+    return genome
 
 
 ##### Biomart database 

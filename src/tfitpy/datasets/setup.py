@@ -8,7 +8,7 @@ from tfitpy.datasets.gene_names import GENE_DATASETS
 from tfitpy.datasets.go import GO_DATASET
 from tfitpy.datasets.tf import TF_DATASET
 from tfitpy.datasets.pair_cache import PAIRWISE_CACHE
-
+from tfitpy.datasets.binding import BINDING_DATASET
 
 DATASETS = {
     **GENE_DATASETS,
@@ -16,12 +16,11 @@ DATASETS = {
     **PPI_DATASETS,
     **GO_DATASET,
     **TF_DATASET,
-    **PAIRWISE_CACHE
+    **PAIRWISE_CACHE,
+    **BINDING_DATASET
 }
 
 FIRST_ORDER = ["biomart", "gencode"]
-
-
 
 def install(data_path):
     """

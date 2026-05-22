@@ -141,7 +141,7 @@ def compute_indices(
     new_methods_only=True,
     data_path=None,
     options={},
-    n_jobs=None,
+    n_jobs=None
 ):
     """
     Compute index columns for every row of *df* in parallel.
@@ -211,10 +211,6 @@ def compute_indices(
     print(f"Done. Added columns for {len(methods)} method(s).")
     return pd.DataFrame(all_rows), merged_additional
 
-
-# -----------
-# Helper
-# -----------
 
 def _split_dataframe(df: pd.DataFrame, n: int):
     """Yield *n* roughly equal sub-DataFrames."""

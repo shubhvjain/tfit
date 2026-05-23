@@ -132,6 +132,70 @@ def load_go(data_path):
     return {"godag": godag, "gene2go": gene2go}
 
 
+def get_gene_products(data_path, go_term, include_children=True):
+    """
+    Return a DataFrame of gene products annotated to a GO term.
+
+    Columns:
+      - symbol: HGNC gene symbol
+      - n_annotations: total number of GO IDs annotated to this symbol (from cache)
+      - direct: True if the gene has the exact go_term in its annotations
+      - via_descendant: True if the gene has any descendant (child) of go_term in its annotations
+      - matching_go_ids: list of GO IDs from the gene's annotation that match (exact term and/or descendants)
+
+    Parameters
+    ----------
+    data_path : str or Path
+        Path where GO data (folder "go") is stored (same as used by load_go()).
+    go_term : str
+        GO term id, e.g. "GO:0008150".
+    include_children : bool, optional
+        If True, will include descendants of go_term (recommended).
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per gene symbol, sorted by matching count (descending).
+    """
+    data = load_go(data_path)
+    godag = data["godag"]
+    gene2go = data["gene2go"]
+
+    if go_term not in godag:
+        raise ValueError(f"Unknown GO term: {go_term}")
+
+    # Build set of GO IDs to match: the term itself plus children if requested
+    match_ids = {go_term}
+    if include_children:
+        # get_all_children() returns a set of child GO IDs in goatools DAG nodes
+        match_ids |= set(godag[go_term].get_all_children())
+
+    rows = []
+    for symbol, gos in gene2go.items():
+        gos_set = set(gos)
+        matching = sorted(gos_set & match_ids)
+        if not matching:
+            continue
+        rows.append({
+            "symbol": symbol,
+            "n_annotations": len(gos_set),
+            "direct": (go_term in gos_set),
+            "via_descendant": (len(gos_set & (match_ids - {go_term})) > 0),
+            "matching_go_ids": ";".join(matching),
+        })
+
+    if not rows:
+        # return empty DataFrame with expected columns
+        return pd.DataFrame(columns=["symbol","n_annotations","direct","via_descendant","matching_go_ids"])
+
+    df = pd.DataFrame(rows)
+    # sort by how many matching GO IDs then by symbol
+    df["n_matching"] = df["matching_go_ids"].apply(len)
+    df = df.sort_values(["n_matching","n_annotations"], ascending=[False, False]).reset_index(drop=True)
+    df = df[["symbol","n_annotations","direct","via_descendant","matching_go_ids"]]
+
+    return df
+
 GO_DATASET = {
     "go": {
         "download": download_go,

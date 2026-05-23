@@ -8,5 +8,7 @@ from tfitpy.network_analysis_ppi.main import load_all_network_data
 
 from tfitpy.network_analysis_ppi.index import compute_module_network_metrics
 
+from tfitpy.datasets.go import get_gene_products
 
-_all_=["load_cache","compute_indices","convert_gene_df","generate_null_networks","load_all_network_data","compute_module_network_metrics"]
+
+_all_=["load_cache","compute_indices","convert_gene_df","generate_null_networks","load_all_network_data","compute_module_network_metrics","get_gene_products"]

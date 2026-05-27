@@ -8,7 +8,7 @@ from pyfaidx import Fasta
 GENCODE_ATTRIBUTES = [
     'gene_id', 'transcript_id', 'gene_type',
     'gene_name', 'transcript_name', 'protein_id', 'exon_id',
-    'chromosome', 'feature', 'start', 'end', 'strand', 'tss',
+    'chromosome', 'feature', 'start', 'end', 'strand', 'tss', 'tag'
 ]
 
 GENCODE = {
@@ -69,22 +69,30 @@ def process_line(line):
     attribute_str = fields[8].replace("'", ' ')
     items = attribute_str.split(";")
     result = {}
+    
+    tags = []
     for item in items:
         pair = generate_kv(item)
         if pair:
             k, v = pair
-            result[k] = v
+            if k == 'tag':
+                tags.append(v)
+            else:
+                result[k] = v
+
+    if tags:
+        result['tag'] = ",".join(tags)
 
     strand = fields[6]
-    start  = int(fields[3])
-    end    = int(fields[4])
+    start = int(fields[3])
+    end = int(fields[4])
 
     result['chromosome'] = fields[0]
-    result['feature']    = fields[2]
-    result['start']      = start
-    result['end']        = end
-    result['strand']     = strand
-    result['tss']        = start if strand == '+' else end
+    result['feature'] = fields[2]
+    result['start'] = start
+    result['end'] = end
+    result['strand'] = strand
+    result['tss'] = start if strand == '+' else end
 
     return result
 
@@ -112,7 +120,8 @@ def process_gencode(data_path, rerun=False, chunksize=200000):
                     continue
 
                 processed = process_line(line)
-                row = {col: processed.get(col, None) for col in GENCODE_ATTRIBUTES}
+                row = {col: processed.get(col, None)
+                       for col in GENCODE_ATTRIBUTES}
                 chunk.append(row)
 
                 if len(chunk) >= chunksize:
@@ -136,9 +145,12 @@ def process_gencode(data_path, rerun=False, chunksize=200000):
         print("Database created successfully")
 
     finally:
-        con.execute("CREATE INDEX IF NOT EXISTS idx_gene_id ON mappings(gene_id)")
-        con.execute("CREATE INDEX IF NOT EXISTS idx_gene_name ON mappings(gene_name)")
-        con.execute("CREATE INDEX IF NOT EXISTS idx_transcript_id ON mappings(transcript_id)")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_gene_id ON mappings(gene_id)")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_gene_name ON mappings(gene_name)")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_transcript_id ON mappings(transcript_id)")
         con.close()
 
 
@@ -146,8 +158,43 @@ def load_gencode(data_path):
     """Return an open SQLite connection to the GENCODE database."""
     db_path = Path(data_path) / GENCODE["FOLDER"] / GENCODE["FINAL_FILE"]
     if not db_path.exists():
-        raise FileNotFoundError(f"{GENCODE['FINAL_FILE']} not found. Run process_gencode() first.")
+        raise FileNotFoundError(
+            f"{GENCODE['FINAL_FILE']} not found. Run process_gencode() first.")
     return sqlite3.connect(db_path)
+
+
+def gencode_stats(con):
+    query = """
+    SELECT
+        SUM(CASE WHEN feature = 'gene' AND gene_type = 'protein_coding' THEN 1 ELSE 0 END) AS protein_coding_genes,
+        SUM(CASE WHEN feature = 'transcript' AND gene_type = 'protein_coding' THEN 1 ELSE 0 END) AS protein_coding_transcripts,
+        COUNT(CASE WHEN feature = 'gene' THEN 1 END) AS total_gene_rows,
+        COUNT(CASE WHEN feature = 'transcript' THEN 1 END) AS total_transcript_rows
+    FROM mappings
+    """
+    return pd.read_sql_query(query, con)
+
+def get_protein_coding_genes(con, use_gene_name=True):
+    col = "gene_name" if use_gene_name else "gene_id"
+
+    query = f"""
+    SELECT DISTINCT g.{col}
+    FROM mappings g
+    WHERE g.feature = 'gene'
+      AND g.gene_type = 'protein_coding'
+      AND g.{col} IS NOT NULL
+      AND EXISTS (
+          SELECT 1
+          FROM mappings t
+          WHERE t.gene_id = g.gene_id
+            AND t.feature = 'transcript'
+            AND t.gene_type = 'protein_coding'
+      )
+    ORDER BY g.{col}
+    """
+
+    df = pd.read_sql_query(query, con)
+    return df[col].dropna().tolist()
 
 def load_genome(data_path):
     """
@@ -157,7 +204,7 @@ def load_genome(data_path):
     return genome
 
 
-##### Biomart database 
+# Biomart database
 
 BIOMART = {
     "URL": "http://www.ensembl.org/biomart/martservice?query=<?xml version='1.0' encoding='UTF-8'?><!DOCTYPE Query><Query virtualSchemaName='default' formatter='TSV' header='1' uniqueRows='1' datasetConfigVersion='0.6'><Dataset name='hsapiens_gene_ensembl' interface='default'><Attribute name='ensembl_gene_id'/><Attribute name='external_gene_name'/><Attribute name='entrezgene_id'/><Attribute name='uniprotswissprot'/><Attribute name='refseq_mrna'/><Attribute name='description'/></Dataset></Query>",
@@ -193,7 +240,8 @@ def download_biomart(data_path, rerun=False):
 def process_biomart(data_path, rerun=False):
     """Process the biomart data and generate sqlite db file for easy mapping"""
     raw_file = Path(data_path) / BIOMART['FOLDER'] / BIOMART['RAW_FILE']
-    processed_file = Path(data_path) / BIOMART['FOLDER'] / BIOMART['FINAL_FILE']
+    processed_file = Path(data_path) / \
+        BIOMART['FOLDER'] / BIOMART['FINAL_FILE']
 
     if processed_file.exists() and not rerun:
         print(f"File already exists: {processed_file}")
@@ -203,17 +251,21 @@ def process_biomart(data_path, rerun=False):
     df = pd.read_csv(raw_file, sep='\t')
     df.columns = BIOMART['COLUMNS']
 
-    df['entrez_id'] = pd.to_numeric(df['entrez_id'], errors='coerce').astype('Int64')
+    df['entrez_id'] = pd.to_numeric(
+        df['entrez_id'], errors='coerce').astype('Int64')
 
     print(f"Creating SQLite database at {processed_file}...")
     con = sqlite3.connect(processed_file)
 
     df.to_sql('gene_mappings', con, if_exists='replace', index=False)
 
-    con.execute('CREATE INDEX IF NOT EXISTS idx_ensembl ON gene_mappings(ensembl_gene_id)')
+    con.execute(
+        'CREATE INDEX IF NOT EXISTS idx_ensembl ON gene_mappings(ensembl_gene_id)')
     con.execute('CREATE INDEX IF NOT EXISTS idx_symbol ON gene_mappings(symbol)')
-    con.execute('CREATE INDEX IF NOT EXISTS idx_entrez ON gene_mappings(entrez_id)')
-    con.execute('CREATE INDEX IF NOT EXISTS idx_uniprot ON gene_mappings(uniprot_id)')
+    con.execute(
+        'CREATE INDEX IF NOT EXISTS idx_entrez ON gene_mappings(entrez_id)')
+    con.execute(
+        'CREATE INDEX IF NOT EXISTS idx_uniprot ON gene_mappings(uniprot_id)')
     con.commit()
     con.close()
 
@@ -222,13 +274,14 @@ def process_biomart(data_path, rerun=False):
 
 def load_biomart(data_path):
     """Return an open SQLite connection to the BioMart database."""
-    processed_file = Path(data_path) / BIOMART['FOLDER'] / BIOMART['FINAL_FILE']
+    processed_file = Path(data_path) / \
+        BIOMART['FOLDER'] / BIOMART['FINAL_FILE']
 
     if not processed_file.exists():
-        raise FileNotFoundError(f"{BIOMART['FINAL_FILE']} not found. Run process_biomart() first.")
+        raise FileNotFoundError(
+            f"{BIOMART['FINAL_FILE']} not found. Run process_biomart() first.")
 
     return sqlite3.connect(processed_file)
-
 
 
 GENE_DATASETS = {
@@ -243,6 +296,7 @@ GENE_DATASETS = {
         'load': load_biomart,
     }
 }
+
 
 def convert_genes(
     input: List[Any],
@@ -297,7 +351,8 @@ def convert_genes(
     print(f"  Unique values: {unique_count}")
     print(f"  Successfully mapped: {mapped_count}")
     print(f"  Failed to map: {unique_count - mapped_count}")
-    print(f"  Null results: {null_in_results} ({null_in_results/max(total,1)*100:.2f}%)")
+    print(
+        f"  Null results: {null_in_results} ({null_in_results/max(total, 1)*100:.2f}%)")
 
     return mapping_dict
 

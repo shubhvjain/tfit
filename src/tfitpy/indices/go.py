@@ -299,8 +299,9 @@ def _go_scores_from_cache(sources: list, pairs: list, cache: pd.DataFrame) -> di
 
 def go_all_scores(
     sources: list,
-    datasets: dict = None,
+    dataset_caches: dict = None,
     pairs: list = None,
+    cache_key = "go",
     **kwargs,
 ) -> dict:
     """Compute all 3 GO similarity scores in a single pass over pairs.
@@ -314,7 +315,7 @@ def go_all_scores(
 
     Args:
         sources: List of gene identifiers in the regulatory module.
-        datasets: Dataset cache dict containing 'go' with keys:
+        dataset_caches: dataset_cache cache dict containing 'go' with keys:
                   'godag', 'gene2go'. Must be provided.
         pairs: Optional precomputed list of (g1, g2) tuples. If None,
                generated from sources via generate_tf_pairs().
@@ -326,31 +327,31 @@ def go_all_scores(
             goa_similarity_jc
 
     Raises:
-        ValueError: If datasets is None or 'go' key is missing.
+        ValueError: If dataset_caches is None or 'go' key is missing.
     """
 
         # Check if we have the cache
-    if datasets is not None and 'pairwise_score_cache' in datasets:
+    if dataset_caches is not None and 'pairwise_score_cache' in dataset_caches:
         # Fast path: use cache
-        cache = datasets['pairwise_score_cache']
+        cache = dataset_caches['pairwise_score_cache']
         #print("using fastcache for GO")
         return _go_scores_from_cache(sources, pairs, cache)
         
-    if datasets is None:
+    if dataset_caches is None:
         raise ValueError(
             "datasets cache is required. Create cache with load_datasets() first.")
-    if "go" not in datasets:
-        raise ValueError("Dataset dependency missing: 'go'")
+    if cache_key not in dataset_caches:
+        raise ValueError("dataset_cache dependency missing: 'go'")
 
-    godag = datasets["go"]["godag"]
-    gene2go = datasets["go"]["gene2go"]
+    godag = dataset_caches[cache_key]["godag"]
+    gene2go = dataset_caches[cache_key]["gene2go"]
 
     # TermCounts built once per row call, not once per method
     termcounts = TermCounts(godag, gene2go)
-
+    
     if pairs is None:
         pairs = generate_tf_pairs(sources)
-
+    # print(pairs)
     # Row-level terms cache: gene2go.get(gene) fetched once per gene,
     # reused across all pairs and all 3 methods that gene appears in.
     terms_cache: dict = {}
@@ -365,6 +366,7 @@ def go_all_scores(
         if gene2 not in terms_cache:
             terms_cache[gene2] = list(gene2go.get(gene2, set()))
 
+        # print(terms_cache)
         terms1 = terms_cache[gene1]
         terms2 = terms_cache[gene2]
 

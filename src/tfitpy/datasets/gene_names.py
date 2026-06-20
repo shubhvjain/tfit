@@ -4,6 +4,8 @@ import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from pyfaidx import Fasta
+from Bio.Seq import Seq
+import requests
 
 GENCODE_ATTRIBUTES = [
     'gene_id', 'transcript_id', 'gene_type',
@@ -203,6 +205,79 @@ def load_genome(data_path):
     genome = Fasta(str(fasta_path))
     return genome
 
+def get_gene_promoter_sequence_human(data_path, gene_name, upstream_bp=2000):
+    db_path = Path(data_path) / GENCODE["FOLDER"] / GENCODE["FINAL_FILE"]
+    fasta_path = Path(data_path) / GENCODE["FOLDER"] / GENCODE["FASTA_FILE"]
+
+    con = sqlite3.connect(db_path)
+
+    query = """
+    SELECT gene_name, transcript_id, chromosome, strand, start, end, tss, tag
+    FROM mappings
+    WHERE feature = 'transcript'
+      AND gene_type = 'protein_coding'
+      AND gene_name = ?
+      AND chromosome IS NOT NULL
+      AND strand IN ('+', '-')
+      AND tss IS NOT NULL
+    """
+
+    df = pd.read_sql_query(query, con, params=[gene_name])
+    con.close()
+
+
+    if df.empty:
+        raise ValueError(f"Gene not found: {gene_name}")
+
+    def score_tag(tag):
+        tag = "" if pd.isna(tag) else str(tag)
+
+        if "MANE_Select" in tag:
+            return 0
+        if "Ensembl_canonical" in tag:
+            return 1
+        if "appris_principal_1" in tag:
+            return 2
+        if "appris_principal_2" in tag:
+            return 3
+        if "appris_principal_3" in tag:
+            return 4
+        return 5
+
+    df["score"] = df["tag"].apply(score_tag)
+    df["tx_len"] = df["end"] - df["start"]
+
+    # Best transcript first
+    df = df.sort_values(
+        by=["score", "tx_len"],
+        ascending=[True, False]
+    )
+
+    row = df.iloc[0]
+    genome = Fasta(str(fasta_path))
+
+    chrom = row["chromosome"]
+    tss = int(row["tss"])
+    strand = row["strand"]
+
+    if strand == "+":
+        start0 = tss - upstream_bp
+        end0 = tss
+        if start0 < 0:
+            raise ValueError(f"Promoter goes before chromosome start for {gene_name}")
+        seq = str(genome[chrom][start0:end0]).upper()
+    else:
+        start0 = tss - 1
+        end0 = start0 + upstream_bp
+        seq = str(-genome[chrom][start0:end0]).upper()
+
+    if len(seq) != upstream_bp:
+        raise ValueError(f"Could not extract full promoter for {gene_name}")
+
+    return seq
+
+
+
 
 # Biomart database
 
@@ -283,6 +358,81 @@ def load_biomart(data_path):
 
     return sqlite3.connect(processed_file)
 
+GENE_PLANT_MAPPING = {
+  "FOLDER":"arabidopsis_genes",
+  "FILE":"gene_aliases_20241001.txt",
+  "URL": "https://www.arabidopsis.org/api/download-files/download?filePath=Public_Data_Releases/TAIR_Data_20240930/gene_aliases_20241001.txt.gz"
+}
+
+def download_plant_gene_mapping(data_path,rerun=False):
+    """Download dataset dataset"""
+    raw_path = Path(data_path) / f"{GENE_PLANT_MAPPING['FOLDER']}"
+    raw_path.mkdir(parents=True, exist_ok=True)
+    
+    file_path = pooch.retrieve(
+        url= GENE_PLANT_MAPPING['URL'],
+        known_hash=None,
+        path=raw_path,
+        fname= GENE_PLANT_MAPPING["FILE"]
+    )
+    
+    print(f"Downloaded  DB to {file_path}")
+    return file_path
+
+def process_plant_gene_mapping(data_path,rerun=False):
+    """Process the tflist dataset """
+    return
+
+
+def load_plant_gene_mapping(data_path):
+    """Load hippie into memory"""
+    file = Path(data_path) / f"{GENE_PLANT_MAPPING['FOLDER']}" / f"{GENE_PLANT_MAPPING['FILE']}" 
+    print(file)
+    if not file.exists():
+        raise FileNotFoundError(f" {GENE_PLANT_MAPPING['FILE']} not found. Run setup_datasets() first.")
+    
+    df = pd.read_csv(file, sep="\t",encoding="latin1" ,names=["locus", "symbol", "full_name", "alias_type"])
+    locus_to_name = dict(zip(df["locus"], df["symbol"]))
+    return locus_to_name
+
+
+SPECIES_SLUG = {
+    "human": "homo_sapiens",
+    "arabidopsis": "arabidopsis_thaliana",
+}
+
+
+def get_promoter_sequence_online(gene_name, species="human", upstream=2000):
+    slug = SPECIES_SLUG[species]
+
+    lookup_url = f"https://rest.ensembl.org/lookup/symbol/{slug}/{gene_name}?content-type=application/json"
+    info = requests.get(lookup_url).json()
+
+    if "seq_region_name" not in info:
+        raise ValueError(f"Gene not found: {gene_name}. Response: {info}")
+
+    # print(info)
+    chrom = info["seq_region_name"]
+    strand = info["strand"]
+    tss = info["start"] if strand == 1 else info["end"]
+
+    if strand == 1:
+        region = f"{chrom}:{max(1, tss - upstream)}-{tss - 1}"
+    else:
+        region = f"{chrom}:{tss + 1}-{tss + upstream}"
+
+    seq_url = (
+        f"https://rest.ensembl.org/sequence/region/{slug}/{region}"
+        f"?content-type=text/plain&strand={strand}"
+    )
+
+    seq = requests.get(seq_url).text.strip().upper()
+
+    if not seq:
+        raise ValueError(f"Could not fetch promoter sequence for {gene_name}")
+
+    return seq
+
 
 GENE_DATASETS = {
     'gencode': {
@@ -294,6 +444,11 @@ GENE_DATASETS = {
         'download': download_biomart,
         'process': process_biomart,
         'load': load_biomart,
+    },
+    'plant_gene_mapping':{
+        'download':download_plant_gene_mapping,
+        'process': process_plant_gene_mapping,
+        'load': load_plant_gene_mapping
     }
 }
 

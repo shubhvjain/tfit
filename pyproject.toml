@@ -1,11 +1,11 @@
 [project]
 name = "tfitpy"
-version = "0.6.8"
+version = "0.8.0"
 description = "TFit : Assessing the combinatorial potential of Transcription Factors in Gene Regulation"
 authors = [
     {name = "SVJ"}
 ]
-license = {text = "MIT"}
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11, !=3.14.1"
 dependencies = [
@@ -27,10 +27,14 @@ dependencies = [
     "pyfaidx (>=0.9.0.4,<0.10.0.0)",
     "igraph (>=1.0.0,<2.0.0)",
     "mlxtend (>=0.24.0,<0.25.0)",
-    "numba (>=0.65.1,<0.66.0)"
-
+    "numba (>=0.65.1,<0.66.0)",
+    "dcor (>=0.7,<0.8)"
 ]
 
+[tool.poetry]
+packages = [
+    { include = "tfitpy", from = "src" }
+]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -44,7 +48,3 @@ sphinx-book-theme = "^1.1.4"
 sphinx-autodoc-typehints = "^3.5.1"
 pytest = "^9.0.2"
 sphinxcontrib-bibtex = "^2.6.5"
-
-
-[tool.poetry.scripts]
-tfitpy = "tfitpy.cli:cli"

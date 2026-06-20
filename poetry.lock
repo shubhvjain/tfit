@@ -886,6 +886,29 @@ docs = ["ipython", "matplotlib", "numpydoc", "sphinx"]
 tests = ["pytest", "pytest-cov", "pytest-xdist"]
 
 [[package]]
+name = "dcor"
+version = "0.7"
+description = "dcor: distance correlation and energy statistics in Python."
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "dcor-0.7-py3-none-any.whl", hash = "sha256:2a5875467d2b554a9d7673e574a26f9ba06fc53f3229d49cd9a18c90d7d25042"},
+    {file = "dcor-0.7.tar.gz", hash = "sha256:386d408596d7ec39af28b52c89e9fc438c4f13d8ed3d673e2c3b21029f57cbce"},
+]
+
+[package.dependencies]
+array-api-compat = "*"
+joblib = "*"
+numba = ">=0.51"
+numpy = "*"
+scipy = "*"
+
+[package.extras]
+docs = ["docutils (==0.17.1)", "jupyter-sphinx", "matplotlib", "myst-parser", "pandas", "pydata-sphinx-theme", "pygments (>=2.4.1)", "sphinx (>=3)", "sphinx-gallery", "sphinxcontrib-bibtex"]
+test = ["array-api-strict", "numpy (<2)", "pytest", "pytest-cov", "pytest-subtests"]
+
+[[package]]
 name = "debugpy"
 version = "1.8.17"
 description = "An implementation of the Debug Adapter Protocol for Python"
@@ -5424,4 +5447,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11, !=3.14.1"
-content-hash = "9c88954b18f98f50772bb6e268bb8abde7d36070ef384cd4439f5d750da976d5"
+content-hash = "3dc2ae70b5ab54e145286655b63fafb5bb2d8f9d5a7f0e537680809f1f63122e"

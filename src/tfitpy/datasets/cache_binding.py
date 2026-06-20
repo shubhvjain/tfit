@@ -9,112 +9,155 @@ from pathlib import Path
 from pyfaidx import Fasta
 from tfitpy.datasets.binding import get_jasper_path
 from pyjaspar import jaspardb
-from tfitpy.datasets.tf import load_tflist
+from tfitpy.datasets.regulators import load_tflist
+import numpy as np
+from numba import njit, prange
 
-def generate_promoter_reference(data_path: str, upstream_bp: int = 2000,rerun=False) -> None:
-    """Generates an optimized, clean database of 2000bp promoters for downstream TRAP tasks.
-    
-    Filters for canonical protein-coding transcripts utilizing the parsed 'tag' metadata, 
-    and writes the final matrix directly to data_path/tfbs as a high-performance Parquet file.
-    """
+
+
+def generate_promoter_reference_human(data_path, upstream_bp: int = 2000, rerun=False):
     base_path = Path(data_path)
     db_path = base_path / GENCODE["FOLDER"] / GENCODE["FINAL_FILE"]
     fasta_path = base_path / GENCODE["FOLDER"] / GENCODE["FASTA_FILE"]
-    
-    # Dynamically build and check output folder: data_path / tfbs
+
     output_dir = base_path / "tfbs"
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    output_file = output_dir / f"canonical_promoters_{upstream_bp}bp.parquet"
+
+    output_file = output_dir / f"human_promoters_{upstream_bp}bp.parquet"
     if output_file.exists() and not rerun:
         print("File already exists")
         return
 
     if not db_path.exists():
-        raise FileNotFoundError(f"Database missing at {db_path}. Please run process_gencode first.")
+        raise FileNotFoundError(f"Database missing at {db_path}")
     if not fasta_path.exists():
-        raise FileNotFoundError(f"Genome FASTA missing at {fasta_path}.")
+        raise FileNotFoundError(f"Genome FASTA missing at {fasta_path}")
 
-    print("Querying canonical protein-coding transcripts from SQLite mappings...")
-    con = sqlite3.connect(db_path)
-    
-    # We query feature='transcript' because tags like 'appris_principal_1' 
-    # are assigned specifically to transcript rows rather than broad gene rows.
+    # Load protein-coding transcript rows only
     query = """
-        SELECT gene_id, gene_name, chromosome, strand, tss, tag 
-        FROM mappings 
-        WHERE feature = 'transcript' 
-          AND gene_type = 'protein_coding'
-          AND (tag LIKE '%appris_principal_1%' OR tag LIKE '%ensembl_canonical%')
-          AND chromosome IS NOT NULL
-          AND tss IS NOT NULL
+    SELECT
+        gene_id,
+        gene_name,
+        transcript_id,
+        chromosome,
+        strand,
+        start,
+        end,
+        tss,
+        tag
+    FROM mappings
+    WHERE feature = 'transcript'
+      AND gene_type = 'protein_coding'
+      AND gene_id IS NOT NULL
+      AND transcript_id IS NOT NULL
+      AND chromosome IS NOT NULL
+      AND strand IN ('+', '-')
+      AND tss IS NOT NULL
     """
-    df_transcripts = pd.read_sql_query(query, con)
+
+    con = sqlite3.connect(db_path)
+    df = pd.read_sql_query(query, con)
     con.close()
-    
-    # To be absolutely safe against genes with complex annotations possessing BOTH tags,
-    # we drop duplicates so we keep exactly ONE canonical transcript promoter per unique gene_id.
-    df_transcripts = df_transcripts.drop_duplicates(subset=["gene_id"])
-    
-    print(f"Loaded coordinates for {len(df_transcripts)} unique canonical genes. Initializing pyfaidx...")
+
+    def get_priority(tag_value):
+        tags = set()
+        if pd.notna(tag_value) and tag_value:
+            tags = {x.strip() for x in str(tag_value).split(",") if x.strip()}
+
+        # Priority order:
+        # 1. MANE_Select
+        # 2. Ensembl_canonical
+        # 3. appris_principal_1, 2, ...
+        # 4. longest transcript span fallback
+        if "MANE_Select" in tags:
+            return (0, 0)
+
+        if "Ensembl_canonical" in tags:
+            return (1, 0)
+
+        appris_tags = [t for t in tags if t.startswith("appris_principal_")]
+        if appris_tags:
+            nums = []
+            for t in appris_tags:
+                try:
+                    nums.append(int(t.split("_")[-1]))
+                except ValueError:
+                    pass
+            return (2, min(nums) if nums else 999)
+
+        return (3, 999)
+
+    # Rank transcripts within each gene
+    df["priority"] = df["tag"].apply(get_priority)
+    df["tx_len"] = df["end"] - df["start"]
+
+    # Keep one transcript per gene
+    df = df.sort_values(
+        by=["gene_id", "priority", "tx_len", "transcript_id"],
+        ascending=[True, True, False, True]
+    ).drop_duplicates(subset=["gene_id"], keep="first").copy()
+
     genome = Fasta(str(fasta_path))
     records = []
-    
-    # Extract sequences sequentially using low-overhead memory slices
-    for _, row in df_transcripts.iterrows():
-        chrom = row['chromosome']
-        tss = int(row['tss'])
-        strand = row['strand']
-        
-        if chrom not in genome:
+
+    for row in df.itertuples(index=False):
+        if row.chromosome not in genome:
             continue
-            
-        # Determine exact upstream sequence coordinates based on strand
-        if strand == '+':
-            start = max(0, tss - upstream_bp)
-            end = tss
+
+        # Build promoter interval from TSS
+        if row.strand == "+":
+            start0 = row.tss - upstream_bp
+            end0 = row.tss
+
+            if start0 < 0:
+                continue
+
+            seq = str(genome[row.chromosome][start0:end0]).upper()
+
         else:
-            start = tss
-            end = tss + upstream_bp
-            
-        # Grab slice string and standardize to uppercase characters (removes soft-masking)
-        seq_str = str(genome[chrom][start:end]).upper()
-        
-        # Verify sequence length matches requested window length exactly (skips boundary cutoffs)
-        if len(seq_str) == upstream_bp:
-            records.append({
-                "gene_id": row['gene_id'],
-                "gene_name": row['gene_name'],
-                "chromosome": chrom,
-                "strand": strand,
-                "tss": tss,
-                "promoter_sequence": seq_str
-            })
-            
-    # Build reference pandas frame
+            start0 = row.tss - 1
+            end0 = start0 + upstream_bp
+
+            seq_obj = genome[row.chromosome][start0:end0]
+            if len(seq_obj) != upstream_bp:
+                continue
+
+            # Reverse-complement for minus strand promoters
+            seq = str(-seq_obj).upper()
+
+        if len(seq) != upstream_bp:
+            continue
+
+        records.append({
+            "gene_id": row.gene_id,
+            "gene_name": row.gene_name,
+            "transcript_id": row.transcript_id,
+            "chromosome": row.chromosome,
+            "strand": row.strand,
+            "tss": row.tss,
+            "promoter_start": start0 + 1,
+            "promoter_end": end0,
+            "promoter_sequence": seq,
+        })
+
     df_promoters = pd.DataFrame(records)
-    
-    # Save output using high-velocity binary Parquet inside your requested folder
-    
     df_promoters.to_parquet(output_file, index=False)
-    
-    print(f"Successfully compiled {len(df_promoters)} promoters.")
-    print(f"Saved binary reference file to: {output_file}")
+
+    print(f"Saved {len(df_promoters)} promoters to {output_file}")
 
 
-def get_promoter_reference(data_path, upstream_bp: int = 2000):
+def get_promoter_reference_human(data_path, upstream_bp: int = 2000):
     """
     """
-    pt = Path(data_path) / "tfbs"/ f"canonical_promoters_{upstream_bp}bp.parquet"
+    pt = Path(data_path) / "tfbs"/ f"human_promoters_{upstream_bp}bp.parquet"
     df = pd.read_parquet(pt)
     return df 
-
 
 
 def list_human_tfs_pyjaspar(data_path):
     # Initialize the JASPAR database object
     # (pyjaspar will automatically pull metadata for the release)
-    jaspar_db = get_jasper_path(data_path)
+    jaspar_db = get_jasper_path(data_path,organism="human")
     jdb = jaspardb(sqlite_db_path=str(jaspar_db))
     
     # Fetch human motifs using the NCBI Taxonomy ID for Homo sapiens (9606)
@@ -149,8 +192,6 @@ def list_human_tfs_pyjaspar(data_path):
     # print(f"Successfully matched {len(matched_tfs)} / {len(reg)} reg")
     
     
-
-
 
 
 def get_regulator_jaspar_status(data_path) -> pd.DataFrame:
@@ -233,16 +274,6 @@ def get_regulator_jaspar_status(data_path) -> pd.DataFrame:
 
 
 ###### optimized implementation of TRAP score
-
-
-import numpy as np
-import pandas as pd
-from numba import njit, prange
-
-import numpy as np
-import pandas as pd
-from pathlib import Path
-from numba import njit, prange
 
 @njit(cache=True)
 def _encode_sequence_numba(seq_bytes: np.ndarray) -> np.ndarray:
@@ -377,105 +408,93 @@ def precompute_trap_affinity_cache(
     return pd.DataFrame(matrix_results, index=gene_ids, columns=tf_ids)
 
 
-
-def generate_and_cache_trap_scores(
-    data_path: str, 
-    upstream_bp: int = 2000, 
-    lambda_param: float = 0.7, 
+def generate_and_cache_trap_scores_human(
+    data_path: str,
+    upstream_bp: int = 2000,
+    lambda_param: float = 0.7,
     bg_gc: float = 0.5
 ) -> None:
-    """Loads extracted promoter references and local JASPAR matrices, computes physical binding 
-    affinity matrices using Numba parallelism, and stores scores as a binary Parquet dataframe.
-    """
     base_dir = Path(data_path)
     tfbs_dir = base_dir / "tfbs"
-    output_file = tfbs_dir / "trap_scores.parquet"
-    
-    # 1. Load the generated canonical promoters reference
-    df_promoters = get_promoter_reference(data_path, upstream_bp=upstream_bp)
-    
-    # Extract structural components and use gene_name for readable output indexing
-    gene_labels = df_promoters["gene_name"].astype(str).tolist()
-    sequences = df_promoters["promoter_sequence"].astype(str).tolist()
-    num_genes = len(gene_labels)
+    tfbs_dir.mkdir(parents=True, exist_ok=True)
 
-    # 2. Extract Motifs from local Database via your existing list_human_tfs_pyjaspar wrapper
+    output_file = tfbs_dir / "trap_scores_human.parquet"
+    if output_file.exists():
+        print("TRAP cache already exists:", output_file)
+        return
+
+    # 1. Load promoters
+    df_promoters = get_promoter_reference_human(data_path, upstream_bp=upstream_bp)
+    promoter_dict = {
+        row.gene_id: row.promoter_sequence
+        for row in df_promoters.itertuples(index=False)
+    }
+
+    # 2. Load motifs from local JASPAR
     print("Fetching vertebrate motifs from local JASPAR repository...")
     all_motifs = list_human_tfs_pyjaspar(data_path)
-    
+
+    jaspar_matrices_dict = {}
     tf_labels = []
-    jaspar_objects = []
+    nuc_order = ["A", "C", "G", "T"]
+
     for motif in all_motifs:
+        counts = motif.pwm_counts if hasattr(motif, "pwm_counts") else motif.counts
+        jaspar_matrices_dict[motif.name] = {
+            nuc: np.array(counts[nuc], dtype=np.float64) for nuc in nuc_order
+        }
         tf_labels.append(motif.name)
-        jaspar_objects.append(motif)
-    num_tfs = len(tf_labels)
-    
-    print(f"Dataset configurations: {num_genes} Target Genes | {num_tfs} Active Transcription Factors.")
 
-    # 3. Construct base matrices and track sizes
-    nuc_order = ['A', 'C', 'G', 'T']
-    bg_frequencies = np.array([
-        (1.0 - bg_gc) / 2.0, bg_gc / 2.0, bg_gc / 2.0, (1.0 - bg_gc) / 2.0
-    ], dtype=np.float64)
-    bg_max = np.max(bg_frequencies)
-    energy_bg = np.log(bg_frequencies / bg_max) / lambda_param
+    print(f"Scoring {len(promoter_dict)} genes x {len(tf_labels)} TFs")
 
-    max_w = max(motif.pwm_counts['A'].shape[0] if hasattr(motif, 'pwm_counts') else len(motif.counts['A']) for motif in jaspar_objects)
-    
-    energy_f_block = np.zeros((num_tfs, 4, max_w), dtype=np.float64)
-    energy_r_block = np.zeros((num_tfs, 4, max_w), dtype=np.float64)
-    r0_values = np.empty(num_tfs, dtype=np.float64)
-    w_values = np.empty(num_tfs, dtype=np.int32)
-    
-    print("Pre-computing structural background energy blocks for profiles...")
-    for j, motif in enumerate(jaspar_objects):
-        # Access background count records safely handling structural variants
-        counts = motif.pwm_counts if hasattr(motif, 'pwm_counts') else motif.counts
-        matrix_counts = np.array([counts[nuc] for nuc in nuc_order], dtype=np.float64)
-        matrix_counts += 1.0
-        W = matrix_counts.shape[1]
-        
-        m_max = np.max(matrix_counts, axis=0)
-        energy_matrix_base = np.log(m_max / matrix_counts) / lambda_param
-        
-        energy_matrix_f = energy_matrix_base + energy_bg[:, np.newaxis]
-        energy_matrix_r = energy_matrix_base[:, ::-1] + energy_bg[:, np.newaxis]
-        
-        energy_f_block[j, :, :W] = energy_matrix_f
-        energy_r_block[j, :, :W] = energy_matrix_r
-        r0_values[j] = np.exp(0.585 * W - 5.66)
-        w_values[j] = W
-
-    # 4. Flatten and encode sequences into a continuous pointer block
-    print("Converting promoter strings to numerical index arrays...")
-    encoded_list = []
-    boundaries = [0]
-    for seq in sequences:
-        seq_bytes = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
-        encoded_seq = _encode_sequence_numba(seq_bytes)
-        encoded_list.append(encoded_seq)
-        boundaries.append(boundaries[-1] + len(encoded_seq))
-        
-    flattened_sequences = np.concatenate(encoded_list)
-    boundaries = np.array(boundaries, dtype=np.int32)
-    
-    # 5. Execute calculations using full thread pool
-    print(f"Launching parallel TRAP calculation grid on all available CPU cores...")
-    matrix_results = _execute_trap_matrix_numba(
-        flattened_sequences, boundaries, 
-        energy_f_block, energy_r_block, 
-        r0_values, w_values, 
-        num_genes, num_tfs
+    # 3. Run TRAP core
+    df_cache = precompute_trap_affinity_cache(
+        promoter_dict=promoter_dict,
+        jaspar_matrices_dict=jaspar_matrices_dict,
+        lambda_param=lambda_param,
+        bg_gc=bg_gc,
     )
-    
-    # 6. Formulate Structured Matrix Dataframe and Save
-    print("Structuring final dataset and committing to local disk cache...")
-    df_cache = pd.DataFrame(matrix_results, index=gene_labels, columns=tf_labels)
-    
-    # Consolidate multiple target predictions if any genes share the exact same gene_name
+
+    # 4. Map gene_ids back to gene_names for readability (optional)
+    gene_id_to_name = {
+        row.gene_id: row.gene_name
+        for row in df_promoters.itertuples(index=False)
+    }
+    df_cache.index = [gene_id_to_name.get(gid, gid) for gid in df_cache.index]
+
+    # Deduplicate gene names and TF names if needed
     if df_cache.index.duplicated().any():
-        print("Note: Found duplicate gene names. Aggregating values via mean value mapping...")
         df_cache = df_cache.groupby(df_cache.index).mean()
-        
+    if df_cache.columns.duplicated().any():
+        df_cache = df_cache.groupby(df_cache.columns, axis=1).mean()
+
+    # 5. Save
     df_cache.to_parquet(output_file)
-    print(f"Pipeline complete! Cache successfully written to: {output_file}")
+    print("TRAP cache written to:", output_file)
+
+def download(data_path):
+    """"""
+    return 
+
+
+def process_human(data_path):
+    """"""
+    generate_promoter_reference_human(data_path, upstream_bp=2000)
+    generate_and_cache_trap_scores_human(data_path, upstream_bp=2000)
+
+
+
+def load_human(data_path):
+    """"""
+    pt = Path(data_path) / "tfbs"/ f"trap_scores_human.parquet"
+    df = pd.read_parquet(pt)
+    return df 
+
+
+BINDING_CACHE = {
+    "trap_cache_human":{
+        "download":download,
+        "process":process_human,
+        "load":load_human
+    }
+}

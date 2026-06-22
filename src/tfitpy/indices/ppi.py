@@ -223,7 +223,7 @@ def induced_network_metrics(sources,target, ppi, null_graphs, mapping):
     lcc_score = max(0.0, -np.log(p_lcc))
 
     p_tc = (tc_hits + 1) / (R + 1)
-    target_connectivity_score = -np.log(p_tc)
+    target_connectivity_score = max(-np.log(p_tc),0.0)
 
     return obs_density, density_score, obs_lcc_ratio, lcc_score, obs_tc_ratio, target_connectivity_score
 
@@ -241,7 +241,6 @@ def get_ppi_interactions(sources,target,G,evidence_type="ppi"):
     df = pd.DataFrame(rows)
     df["evidence_type"]=evidence_type
     return df
-
 
 
 # =========
@@ -309,7 +308,7 @@ def _ppi_scores_from_cache(sources, pairs: list, cache: pd.DataFrame,ppi_keys,pp
 
 
 
-def PPI_SCORES(sources,target,dataset_cache,organism="human",use_pairwise_cache=True):
+def PPI_SCORES(sources,target,dataset_cache,organism="human",use_pairwise_cache=True,pairs=None):
     """
     compute all PPI score for the given source module and target
     """
@@ -319,11 +318,11 @@ def PPI_SCORES(sources,target,dataset_cache,organism="human",use_pairwise_cache=
     ppi_cache_indices = INDICES_DATA["ppi_cached_indices"]
     
     results = {}
+    source_pairs = generate_tf_pairs(sources) if pairs is None else pairs
 
-    source_pairs = generate_tf_pairs(sources)
-    
-
-    if use_pairwise_cache and dataset_cache[pair_cache_key] is not None:
+    if use_pairwise_cache :
+        if dataset_cache[pair_cache_key] is  None:
+            raise ValueError("No cache data provided")
         pairwise_cache = dataset_cache[pair_cache_key]
         cache_results = _ppi_scores_from_cache(sources,source_pairs,pairwise_cache,ppi_keys,ppi_cache_indices)
         results = {**cache_results}
@@ -353,7 +352,7 @@ def PPI_SCORES(sources,target,dataset_cache,organism="human",use_pairwise_cache=
         edges = get_ppi_interactions(sources,target,g,f"{p}")
         evidence_edges.append(edges)
 
-    edges = pd.concat(evidence_edges)
+    edges = pd.concat(evidence_edges,ignore_index=True)
     results = {k: _clean_value(v) for k, v in results.items()}
     return results, edges
 

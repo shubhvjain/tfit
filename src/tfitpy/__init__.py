@@ -1,4 +1,4 @@
-from tfitpy.main import compute_indices,load_cache
+from tfitpy.main import compute_indices,load_cache,validate
 
 # from tfitpy.datasets.gene_names import convert_gene_df
 
@@ -11,4 +11,4 @@ from tfitpy.main import compute_indices,load_cache
 
 # from  tfitpy.validation  import 
 
-_all_=["load_cache","compute_indices"]
+_all_=["load_cache","compute_indices","validate"]

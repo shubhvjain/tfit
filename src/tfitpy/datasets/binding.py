@@ -44,7 +44,7 @@ def download_jaspar(data_path, rerun=False):
     else:
         print(f"JASPAR PFM already exists: {pfm_file}")
 
-def process_jasper(data_path, rerun=False):
+def process_jaspar(data_path, rerun=False):
     """"""
 
 def load_jaspar(data_path):
@@ -110,7 +110,7 @@ def load_jaspar_plant(data_path):
     return jdb
 
 
-def get_jasper_path(data_path,organism="human"):
+def get_jaspar_path(data_path,organism="human"):
     """
     """
     if organism=="human":
@@ -126,7 +126,7 @@ def get_jasper_path(data_path,organism="human"):
 BINDING_DATASET = {
     "jaspar": {
         "download": download_jaspar,
-        "process": process_jasper,
+        "process": process_jaspar,
         "load": load_jaspar,
     },
      "jaspar_plant": {

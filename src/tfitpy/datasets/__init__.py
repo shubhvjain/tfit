@@ -3,15 +3,15 @@ import os
 
 from tfitpy.datasets.ppi import PPI_DATASETS
 from tfitpy.datasets.ppi_networks import PPI_NULL_NETWORKS
-
 from tfitpy.datasets.grn import GRN_DATASETS
 from tfitpy.datasets.gene_names import GENE_DATASETS
 from tfitpy.datasets.go import GO_DATASET
 from tfitpy.datasets.regulators import TF_DATASET
 from tfitpy.datasets.binding import BINDING_DATASET
 from tfitpy.datasets.cache_binding import BINDING_CACHE
-
 from  tfitpy.datasets.cache_pairwise_scores import PAIRWISE_CACHE
+from tfitpy.datasets.cache_dcorr import generate_source_dcorr_cache,generate_target_dcorr_cache
+from tfitpy.utils import ORGANISM_METADATA
 
 HUMAN_DATASETS = { 
     "stringdb": PPI_DATASETS["stringdb"],
@@ -21,8 +21,9 @@ HUMAN_DATASETS = {
     "hippie_null": PPI_NULL_NETWORKS["hippie_null"],
     "biogrid_null": PPI_NULL_NETWORKS["biogrid_null"],
     "go": GO_DATASET["go"],
-    "jasper": BINDING_DATASET["jaspar"],
-    "coreglist": TF_DATASET["coreglist"]
+    "jaspar": BINDING_DATASET["jaspar"],
+    "coreglist": TF_DATASET["coreglist"],
+    "tflist_human": TF_DATASET["tflist_human"],
 }
 
 HUMAN_CACHE = {
@@ -41,7 +42,7 @@ arabidopsis_DATASETS  = {
 
 arabidopsis_CACHE = {}
 
-def load(data_path, organism="human", load_cache=True):
+def load(data_path, organism="human", load_cache=True,generate_dcorr_cache=True,gene_expression_data=None,targets=[]):
     """
     return a dict of datasets required to generate indices. This can be called once and reused.
     """
@@ -65,8 +66,20 @@ def load(data_path, organism="human", load_cache=True):
         for d in org_cache.keys():
             dataset_loaded[d] = org_cache[d]["load"](data_path)
 
-    return dataset_loaded
+    if generate_dcorr_cache:
+        if gene_expression_data is None :
+            raise ValueError("Expression data not provided")
+        dataset_loaded["gene_expression"] = gene_expression_data
 
+        source_list_key  = ORGANISM_METADATA[organism]["source_background_list"]
+        source_list = dataset_loaded[source_list_key]
+        # generate source_source cache
+        dataset_loaded["dcorr_source_cache"] = generate_source_dcorr_cache(gene_expression_data,source_list)
+        #  generate source target cache
+        if targets is not None:
+            dataset_loaded["dcorr_target_cache"] = generate_target_dcorr_cache(gene_expression_data,source_list,targets)
+
+    return dataset_loaded
 
 
 

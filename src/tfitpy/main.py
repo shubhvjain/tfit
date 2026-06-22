@@ -216,3 +216,43 @@ def _split_dataframe(df: pd.DataFrame, n: int):
     size = max(1, len(df) // n)
     for start in range(0, len(df), size):
         yield df.iloc[start: start + size]
+
+from tfitpy.indices.ppi import PPI_SCORES
+from tfitpy.indices.go import GO_SCORES,GO_EA
+from tfitpy.indices.binding_affinity import TFBA_SCORE
+from tfitpy.indices.distance_correlation import DCORR_SCORES
+
+def validate(sources,target,dataset_cache,organism="human",data_path=None,pairs=None,use_pairwise_cache=True,go_ea=False,ge_data=None):
+    """"""
+    scores = {}
+    evidence = {}
+
+    if pairs is None :
+        pairs = generate_tf_pairs(sources)
+
+    # PPI score
+    ppi_scores, ppi_evidence = PPI_SCORES(sources,target,dataset_cache,organism=organism,use_pairwise_cache=use_pairwise_cache,pairs=pairs)
+    scores = {**ppi_scores}
+    evidence["ppi"] = ppi_evidence
+
+    # GO
+    go_scores = GO_SCORES(sources,target,dataset_cache, organism=organism,use_pairwise_cache=use_pairwise_cache,pairs=pairs ,data_path=data_path)
+
+    scores = {**scores,**go_scores}
+    if go_ea:
+        go_ora = GO_EA(sources,target,dataset_cache, organism=organism)
+        evidence["go_ea"] = go_ora
+    
+    # TFBSA
+    tf_score,tf_evidence = TFBA_SCORE(sources,target,dataset_cache,organism=organism,use_pairwise_cache=use_pairwise_cache,data_path=data_path)
+    scores = {**scores,**tf_score}
+    evidence["tfbs"] = tf_evidence
+
+
+    # DCorr
+    dscore,devidence = DCORR_SCORES(sources,dataset_cache,target,organism=organism)
+    scores = {**scores,**dscore}
+    evidence["dcorr"] = devidence
+
+
+    return scores,evidence

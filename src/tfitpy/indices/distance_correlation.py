@@ -105,9 +105,7 @@ from tfitpy.datasets.cache_dcorr import generate_source_dcorr_cache,generate_tar
 #         "dCor_sources_score": float(round(dc1, 5)),
 #         "dCor_target_score": float(round(dc2, 5))
 #     }, heatmap_matrix
-    
 
-    
 
 def source_source_dcorr(sources, source_cache, source_list, n_permutations=500):
     # restrict to genes present in the cache
@@ -202,10 +200,12 @@ def DCORR_SCORES(
     n_permutations=500
 ):
     gene_expression = dataset_cache["gene_expression"]
-    source_list = dataset_cache["source_list"]
 
-    source_cache = dataset_cache.get("dcorr_source_cache")
-    target_cache = dataset_cache.get("dcorr_target_cache")
+    source_list_key  = ORGANISM_METADATA[organism]["source_background_list"]
+    source_list = dataset_cache[source_list_key]
+
+    source_cache = dataset_cache.get("dcorr_source_cache",None)
+    target_cache = dataset_cache.get("dcorr_target_cache",None)
 
     if source_cache is None:
         source_cache = generate_source_dcorr_cache(

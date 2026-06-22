@@ -146,5 +146,10 @@ TF_DATASET = {
         'download': download_tflist_plant,
         'process': process_tflist_plant,
         'load': load_tflist_plant
+    },
+    'tflist_human':{
+        'download': download_tflist,
+        'process': process_tflist,
+        'load': get_regulator_list
     }
 }

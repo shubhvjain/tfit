@@ -169,7 +169,7 @@ def compute_tfbs_score_cache(target_gene, gene_list, cache_df):
     return tf_found_per, m, s, df_new
 
 
-def TFBA_SCORE(source, target, dataset_cache, organism="human", use_pairwise_cache=True, data_path=None):
+def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_cache=True, data_path=None):
     """"""
     # print(dataset_cache)
     # print(ORGANISM_METADATA[organism])
@@ -186,7 +186,7 @@ def TFBA_SCORE(source, target, dataset_cache, organism="human", use_pairwise_cac
     }
 
     n_permutations = 200
-    n_items = len(source)
+    n_items = len(sources)
 
     if organism == "human":
         # pairwise cache is available
@@ -195,7 +195,7 @@ def TFBA_SCORE(source, target, dataset_cache, organism="human", use_pairwise_cac
             # print()
             cache_key = ORGANISM_METADATA[organism]["pair_cache_trap"]
             trap_cache = dataset_cache[cache_key]
-            p, m, s, e = compute_tfbs_score_cache(target, source, trap_cache)
+            p, m, s, e = compute_tfbs_score_cache(target, sources, trap_cache)
             summary["TF_found_per"] = p
             summary["TFBS_affinity"] = m
             summary["TFBS_affinity_sum"] = s
@@ -204,7 +204,7 @@ def TFBA_SCORE(source, target, dataset_cache, organism="human", use_pairwise_cac
 
             if summary["TF_found_per"] > 0:
                 bg_key = ORGANISM_METADATA[organism]["source_background_list"]
-                background_genes = dataset_cache[bg_key]["symbol"].tolist()
+                background_genes = dataset_cache[bg_key]
                 extreme_count = 0
                 extreme_count_sum = 0
                 for _ in range(n_permutations):
@@ -230,10 +230,10 @@ def TFBA_SCORE(source, target, dataset_cache, organism="human", use_pairwise_cac
         else:
             target_promoter = get_gene_promoter_sequence_human(
                 data_path, target)
-            motif_list = get_motifs_found(jaspar, organism, source)
+            motif_list = get_motifs_found(jaspar, organism, sources)
             # print(motif_list)
             summary["TF_found_per"] = round(
-                len(motif_list) / len(source) * 100, 2)
+                len(motif_list) / len(sources) * 100, 2)
             scores = []
             for motif in motif_list:
                 # print(motif.name)
@@ -257,7 +257,7 @@ def TFBA_SCORE(source, target, dataset_cache, organism="human", use_pairwise_cac
             summary["TFBS_affinity_sum"] = observed_trap_sum
 
             bg_key = ORGANISM_METADATA[organism]["source_background_list"]
-            background_genes = dataset_cache[bg_key]["symbol"].tolist()
+            background_genes = dataset_cache[bg_key]
             # print(background_genes)
 
             if summary["TF_found_per"] > 0:
@@ -313,7 +313,7 @@ def TFBA_SCORE(source, target, dataset_cache, organism="human", use_pairwise_cac
 
         target_promoter = get_promoter_sequence_online(target_name, organism)
         # map loci ids to gene names
-        source_name = [gene_map[s] for s in source if s in gene_map.keys()]
+        source_name = [gene_map[s] for s in sources if s in gene_map.keys()]
         # print(source)
         # print(source_name)
 
@@ -398,5 +398,7 @@ def TFBA_SCORE(source, target, dataset_cache, organism="human", use_pairwise_cac
 
     else:
         raise ValueError("Invalid human")
+
+    evidence = evidence.sort_values(by="value")
 
     return summary, evidence

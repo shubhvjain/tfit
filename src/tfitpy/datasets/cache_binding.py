@@ -7,7 +7,7 @@ import sqlite3
 import pandas as pd
 from pathlib import Path
 from pyfaidx import Fasta
-from tfitpy.datasets.binding import get_jasper_path
+from tfitpy.datasets.binding import get_jaspar_path
 from pyjaspar import jaspardb
 from tfitpy.datasets.regulators import load_tflist
 import numpy as np
@@ -157,7 +157,7 @@ def get_promoter_reference_human(data_path, upstream_bp: int = 2000):
 def list_human_tfs_pyjaspar(data_path):
     # Initialize the JASPAR database object
     # (pyjaspar will automatically pull metadata for the release)
-    jaspar_db = get_jasper_path(data_path,organism="human")
+    jaspar_db = get_jaspar_path(data_path,organism="human")
     jdb = jaspardb(sqlite_db_path=str(jaspar_db))
     
     # Fetch human motifs using the NCBI Taxonomy ID for Homo sapiens (9606)
@@ -200,7 +200,7 @@ def get_regulator_jaspar_status(data_path) -> pd.DataFrame:
     accounting for heterodimers (e.g., 'ARNT::HIF1A'), and returns a summary DataFrame.
     """
     # 1. Load the local JASPAR database via pyjaspar
-    jaspar_db = get_jasper_path(data_path)
+    jaspar_db = get_jaspar_path(data_path)
     jdb = jaspardb(sqlite_db_path=str(jaspar_db))
     
     # Fetch all vertebrate core motifs to widen the matching net

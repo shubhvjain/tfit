@@ -76,7 +76,7 @@ def load_coreglist(data_path):
 
 TFLIST_PLANT = {
   "FOLDER":"tflist",
-  "FILE":"Ath_TF_list.txt",
+  "FILE":"Ath_TF_list.txt.gz",
   "URL": "https://planttfdb.gao-lab.org/download/TF_list/Ath_TF_list.txt.gz"
 }
 

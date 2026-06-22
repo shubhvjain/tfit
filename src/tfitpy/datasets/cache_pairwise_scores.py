@@ -90,7 +90,7 @@ def build(data_path, rerun=False, n_jobs=-1,batch_size=5000,organism="human"):
     
     start = time.time()
 
-    df = get_pairs(tflist[0:10])
+    df = get_pairs(tflist)
     print(f"Generated {len(df):,} pairs")
 
     pairs_list = list(zip(df['gene1'], df['gene2']))

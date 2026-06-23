@@ -56,27 +56,27 @@ def compute_scores_batch(pairs_batch, data_path,organism="human"):
             scores[f'shared_PPI_partners_score_{db_key}'] = score1
         
         # GO scores
-        # godag = datasets[ go_key ]["godag"]
-        # gene2go = datasets[ go_key ]["gene2go"]
+        godag = datasets[ go_key ]["godag"]
+        gene2go = datasets[ go_key ]["gene2go"]
         
-        # terms1 = list(gene2go.get(tf1, set()))
-        # terms2 = list(gene2go.get(tf2, set()))
+        terms1 = list(gene2go.get(tf1, set()))
+        terms2 = list(gene2go.get(tf2, set()))
         
-        # scores['goa_similarity_lin'] = _gene_sim_bma_with_terms(
-        #     terms1, terms2, godag, termcounts, lin_sim
-        # )
-        # scores['goa_similarity_resnik'] = _gene_sim_bma_with_terms(
-        #     terms1, terms2, godag, termcounts, resnik_sim
-        # )
-        # scores['goa_similarity_jc'] = _gene_sim_bma_with_terms(
-        #     terms1, terms2, godag, termcounts, _jc_sim
-        # )
+        scores['goa_similarity_lin'] = _gene_sim_bma_with_terms(
+            terms1, terms2, godag, termcounts, lin_sim
+        )
+        scores['goa_similarity_resnik'] = _gene_sim_bma_with_terms(
+            terms1, terms2, godag, termcounts, resnik_sim
+        )
+        scores['goa_similarity_jc'] = _gene_sim_bma_with_terms(
+            terms1, terms2, godag, termcounts, _jc_sim
+        )
         
         results.append(scores)
     
     return results
 
-def build(data_path, rerun=False, n_jobs=-1,batch_size=5000,organism="human"):
+def build(data_path, rerun=False, n_jobs=-1,batch_size=25000,organism="human"):
     """
     """
 

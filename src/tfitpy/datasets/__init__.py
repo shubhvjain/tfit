@@ -91,7 +91,8 @@ DATASETS = {
     **GO_DATASET,
     **TF_DATASET,
     **PAIRWISE_CACHE,
-    **BINDING_DATASET
+    **BINDING_DATASET,
+    **BINDING_CACHE
 }
 
 FIRST_ORDER = ["biomart", "gencode","go","tflist"]

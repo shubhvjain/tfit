@@ -76,7 +76,7 @@ def compute_scores_batch(pairs_batch, data_path,organism="human"):
     
     return results
 
-def build(data_path, rerun=False, n_jobs=-1,batch_size=25000,organism="human"):
+def build(data_path, rerun=False, n_jobs=-1,batch_size=10000,organism="human"):
     """
     """
 

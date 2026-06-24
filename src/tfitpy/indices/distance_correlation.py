@@ -247,6 +247,9 @@ def DCORR_SCORES(
     # 3) heatmap
     heatmap_matrix = None
     if len(filtered_sources) >= 2:
+        # enforce uniqueness to avoid inflated loc-slices
+        filtered_sources = list(dict.fromkeys(filtered_sources))
+
         heatmap_genes = filtered_sources.copy()
         if target is not None and target_cache is not None and target in target_cache.columns:
             heatmap_genes = filtered_sources + [target]
@@ -257,13 +260,13 @@ def DCORR_SCORES(
             columns=heatmap_genes
         )
 
-        heatmap_matrix.loc[filtered_sources, filtered_sources] = (
-            source_cache.loc[filtered_sources, filtered_sources].values
-        )
+        src_block = source_cache.loc[filtered_sources, filtered_sources]
+        heatmap_matrix.loc[filtered_sources, filtered_sources] = src_block.values
 
         if target is not None and target_cache is not None and target in target_cache.columns:
-            heatmap_matrix.loc[filtered_sources, target] = target_cache.loc[filtered_sources, target].values
-            heatmap_matrix.loc[target, filtered_sources] = target_cache.loc[filtered_sources, target].values
+            tgt_vals = target_cache.loc[filtered_sources, target].values
+            heatmap_matrix.loc[filtered_sources, target] = tgt_vals
+            heatmap_matrix.loc[target, filtered_sources] = tgt_vals
 
     result = {
         "dCor_sources_obs": dcor_src_obs,

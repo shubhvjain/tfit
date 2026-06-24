@@ -399,6 +399,7 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
     else:
         raise ValueError("Invalid human")
 
-    evidence = evidence.sort_values(by="value")
+    if evidence is not None:
+        evidence = evidence.sort_values(by="value")
 
     return summary, evidence

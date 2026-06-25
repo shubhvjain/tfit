@@ -3,10 +3,14 @@ import pooch
 import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from pyfaidx import Fasta
+from Bio.Seq import Seq
+import requests
 
 GENCODE_ATTRIBUTES = [
     'gene_id', 'transcript_id', 'gene_type',
-    'gene_name', 'transcript_name', 'protein_id', 'exon_id'
+    'gene_name', 'transcript_name', 'protein_id', 'exon_id',
+    'chromosome', 'feature', 'start', 'end', 'strand', 'tss', 'tag'
 ]
 
 GENCODE = {
@@ -15,24 +19,42 @@ GENCODE = {
     "GTF_FILE_GZ": "gencode.v39.primary_assembly.annotation.gtf.gz",
     "FINAL_FILE": "gene_name_mapping.db",
     "URL": "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_39/gencode.v39.primary_assembly.annotation.gtf.gz",
+    "FASTA_FILE": "GRCh38.primary_assembly.genome.fa",
+    "FASTA_FILE_GZ": "GRCh38.primary_assembly.genome.fa.gz",
+    "URL_FASTA": "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_39/GRCh38.primary_assembly.genome.fa.gz",
 }
 
 
 def download_gencode(data_path, rerun=False):
-    """Download and decompress GENCODE GTF annotation file"""
+    """Download and decompress GENCODE GTF annotation and genome FASTA."""
     raw_path = Path(data_path) / GENCODE["FOLDER"]
     raw_path.mkdir(parents=True, exist_ok=True)
 
-    file_path = pooch.retrieve(
-        url=GENCODE["URL"],
-        known_hash=None,
-        path=raw_path,
-        fname=GENCODE["GTF_FILE_GZ"],
-        processor=pooch.Decompress(name=GENCODE["GTF_FILE"])
-    )
+    gtf_file = raw_path / GENCODE["GTF_FILE"]
+    if not gtf_file.exists() or rerun:
+        pooch.retrieve(
+            url=GENCODE["URL"],
+            known_hash=None,
+            path=raw_path,
+            fname=GENCODE["GTF_FILE_GZ"],
+            processor=pooch.Decompress(name=GENCODE["GTF_FILE"])
+        )
+        print(f"Downloaded GTF to {gtf_file}")
+    else:
+        print(f"GTF already exists: {gtf_file}")
 
-    print(f"Downloaded GENCODE GTF to {file_path}")
-    return file_path
+    fasta_file = raw_path / GENCODE["FASTA_FILE"]
+    if not fasta_file.exists() or rerun:
+        pooch.retrieve(
+            url=GENCODE["URL_FASTA"],
+            known_hash=None,
+            path=raw_path,
+            fname=GENCODE["FASTA_FILE_GZ"],
+            processor=pooch.Decompress(name=GENCODE["FASTA_FILE"])
+        )
+        print(f"Downloaded FASTA to {fasta_file}")
+    else:
+        print(f"FASTA already exists: {fasta_file}")
 
 
 def generate_kv(inp):
@@ -45,14 +67,35 @@ def generate_kv(inp):
 
 
 def process_line(line):
-    attribute_str = line.replace('\n', "").split('\t')[-1].replace("'", ' ')
+    fields = line.replace('\n', '').split('\t')
+    attribute_str = fields[8].replace("'", ' ')
     items = attribute_str.split(";")
     result = {}
+    
+    tags = []
     for item in items:
         pair = generate_kv(item)
         if pair:
             k, v = pair
-            result[k] = v
+            if k == 'tag':
+                tags.append(v)
+            else:
+                result[k] = v
+
+    if tags:
+        result['tag'] = ",".join(tags)
+
+    strand = fields[6]
+    start = int(fields[3])
+    end = int(fields[4])
+
+    result['chromosome'] = fields[0]
+    result['feature'] = fields[2]
+    result['start'] = start
+    result['end'] = end
+    result['strand'] = strand
+    result['tss'] = start if strand == '+' else end
+
     return result
 
 
@@ -79,7 +122,8 @@ def process_gencode(data_path, rerun=False, chunksize=200000):
                     continue
 
                 processed = process_line(line)
-                row = {col: processed.get(col, None) for col in GENCODE_ATTRIBUTES}
+                row = {col: processed.get(col, None)
+                       for col in GENCODE_ATTRIBUTES}
                 chunk.append(row)
 
                 if len(chunk) >= chunksize:
@@ -103,9 +147,12 @@ def process_gencode(data_path, rerun=False, chunksize=200000):
         print("Database created successfully")
 
     finally:
-        con.execute("CREATE INDEX IF NOT EXISTS idx_gene_id ON mappings(gene_id)")
-        con.execute("CREATE INDEX IF NOT EXISTS idx_gene_name ON mappings(gene_name)")
-        con.execute("CREATE INDEX IF NOT EXISTS idx_transcript_id ON mappings(transcript_id)")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_gene_id ON mappings(gene_id)")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_gene_name ON mappings(gene_name)")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_transcript_id ON mappings(transcript_id)")
         con.close()
 
 
@@ -113,13 +160,126 @@ def load_gencode(data_path):
     """Return an open SQLite connection to the GENCODE database."""
     db_path = Path(data_path) / GENCODE["FOLDER"] / GENCODE["FINAL_FILE"]
     if not db_path.exists():
-        raise FileNotFoundError(f"{GENCODE['FINAL_FILE']} not found. Run process_gencode() first.")
+        raise FileNotFoundError(
+            f"{GENCODE['FINAL_FILE']} not found. Run process_gencode() first.")
     return sqlite3.connect(db_path)
 
 
+def gencode_stats(con):
+    query = """
+    SELECT
+        SUM(CASE WHEN feature = 'gene' AND gene_type = 'protein_coding' THEN 1 ELSE 0 END) AS protein_coding_genes,
+        SUM(CASE WHEN feature = 'transcript' AND gene_type = 'protein_coding' THEN 1 ELSE 0 END) AS protein_coding_transcripts,
+        COUNT(CASE WHEN feature = 'gene' THEN 1 END) AS total_gene_rows,
+        COUNT(CASE WHEN feature = 'transcript' THEN 1 END) AS total_transcript_rows
+    FROM mappings
+    """
+    return pd.read_sql_query(query, con)
+
+def get_protein_coding_genes(con, use_gene_name=True):
+    col = "gene_name" if use_gene_name else "gene_id"
+
+    query = f"""
+    SELECT DISTINCT g.{col}
+    FROM mappings g
+    WHERE g.feature = 'gene'
+      AND g.gene_type = 'protein_coding'
+      AND g.{col} IS NOT NULL
+      AND EXISTS (
+          SELECT 1
+          FROM mappings t
+          WHERE t.gene_id = g.gene_id
+            AND t.feature = 'transcript'
+            AND t.gene_type = 'protein_coding'
+      )
+    ORDER BY g.{col}
+    """
+
+    df = pd.read_sql_query(query, con)
+    return df[col].dropna().tolist()
+
+def load_genome(data_path):
+    """
+    """
+    fasta_path = Path(data_path) / GENCODE["FOLDER"] / GENCODE["FASTA_FILE"]
+    genome = Fasta(str(fasta_path))
+    return genome
+
+def get_gene_promoter_sequence_human(data_path, gene_name, upstream_bp=2000):
+    db_path = Path(data_path) / GENCODE["FOLDER"] / GENCODE["FINAL_FILE"]
+    fasta_path = Path(data_path) / GENCODE["FOLDER"] / GENCODE["FASTA_FILE"]
+
+    con = sqlite3.connect(db_path)
+
+    query = """
+    SELECT gene_name, transcript_id, chromosome, strand, start, end, tss, tag
+    FROM mappings
+    WHERE feature = 'transcript'
+      AND gene_type = 'protein_coding'
+      AND gene_name = ?
+      AND chromosome IS NOT NULL
+      AND strand IN ('+', '-')
+      AND tss IS NOT NULL
+    """
+
+    df = pd.read_sql_query(query, con, params=[gene_name])
+    con.close()
 
 
-##### Biomart database 
+    if df.empty:
+        raise ValueError(f"Gene not found: {gene_name}")
+
+    def score_tag(tag):
+        tag = "" if pd.isna(tag) else str(tag)
+
+        if "MANE_Select" in tag:
+            return 0
+        if "Ensembl_canonical" in tag:
+            return 1
+        if "appris_principal_1" in tag:
+            return 2
+        if "appris_principal_2" in tag:
+            return 3
+        if "appris_principal_3" in tag:
+            return 4
+        return 5
+
+    df["score"] = df["tag"].apply(score_tag)
+    df["tx_len"] = df["end"] - df["start"]
+
+    # Best transcript first
+    df = df.sort_values(
+        by=["score", "tx_len"],
+        ascending=[True, False]
+    )
+
+    row = df.iloc[0]
+    genome = Fasta(str(fasta_path))
+
+    chrom = row["chromosome"]
+    tss = int(row["tss"])
+    strand = row["strand"]
+
+    if strand == "+":
+        start0 = tss - upstream_bp
+        end0 = tss
+        if start0 < 0:
+            raise ValueError(f"Promoter goes before chromosome start for {gene_name}")
+        seq = str(genome[chrom][start0:end0]).upper()
+    else:
+        start0 = tss - 1
+        end0 = start0 + upstream_bp
+        seq = str(-genome[chrom][start0:end0]).upper()
+
+    if len(seq) != upstream_bp:
+        raise ValueError(f"Could not extract full promoter for {gene_name}")
+
+    return seq
+
+
+
+
+# Biomart database
 
 BIOMART = {
     "URL": "http://www.ensembl.org/biomart/martservice?query=<?xml version='1.0' encoding='UTF-8'?><!DOCTYPE Query><Query virtualSchemaName='default' formatter='TSV' header='1' uniqueRows='1' datasetConfigVersion='0.6'><Dataset name='hsapiens_gene_ensembl' interface='default'><Attribute name='ensembl_gene_id'/><Attribute name='external_gene_name'/><Attribute name='entrezgene_id'/><Attribute name='uniprotswissprot'/><Attribute name='refseq_mrna'/><Attribute name='description'/></Dataset></Query>",
@@ -155,7 +315,8 @@ def download_biomart(data_path, rerun=False):
 def process_biomart(data_path, rerun=False):
     """Process the biomart data and generate sqlite db file for easy mapping"""
     raw_file = Path(data_path) / BIOMART['FOLDER'] / BIOMART['RAW_FILE']
-    processed_file = Path(data_path) / BIOMART['FOLDER'] / BIOMART['FINAL_FILE']
+    processed_file = Path(data_path) / \
+        BIOMART['FOLDER'] / BIOMART['FINAL_FILE']
 
     if processed_file.exists() and not rerun:
         print(f"File already exists: {processed_file}")
@@ -165,17 +326,21 @@ def process_biomart(data_path, rerun=False):
     df = pd.read_csv(raw_file, sep='\t')
     df.columns = BIOMART['COLUMNS']
 
-    df['entrez_id'] = pd.to_numeric(df['entrez_id'], errors='coerce').astype('Int64')
+    df['entrez_id'] = pd.to_numeric(
+        df['entrez_id'], errors='coerce').astype('Int64')
 
     print(f"Creating SQLite database at {processed_file}...")
     con = sqlite3.connect(processed_file)
 
     df.to_sql('gene_mappings', con, if_exists='replace', index=False)
 
-    con.execute('CREATE INDEX IF NOT EXISTS idx_ensembl ON gene_mappings(ensembl_gene_id)')
+    con.execute(
+        'CREATE INDEX IF NOT EXISTS idx_ensembl ON gene_mappings(ensembl_gene_id)')
     con.execute('CREATE INDEX IF NOT EXISTS idx_symbol ON gene_mappings(symbol)')
-    con.execute('CREATE INDEX IF NOT EXISTS idx_entrez ON gene_mappings(entrez_id)')
-    con.execute('CREATE INDEX IF NOT EXISTS idx_uniprot ON gene_mappings(uniprot_id)')
+    con.execute(
+        'CREATE INDEX IF NOT EXISTS idx_entrez ON gene_mappings(entrez_id)')
+    con.execute(
+        'CREATE INDEX IF NOT EXISTS idx_uniprot ON gene_mappings(uniprot_id)')
     con.commit()
     con.close()
 
@@ -184,13 +349,89 @@ def process_biomart(data_path, rerun=False):
 
 def load_biomart(data_path):
     """Return an open SQLite connection to the BioMart database."""
-    processed_file = Path(data_path) / BIOMART['FOLDER'] / BIOMART['FINAL_FILE']
+    processed_file = Path(data_path) / \
+        BIOMART['FOLDER'] / BIOMART['FINAL_FILE']
 
     if not processed_file.exists():
-        raise FileNotFoundError(f"{BIOMART['FINAL_FILE']} not found. Run process_biomart() first.")
+        raise FileNotFoundError(
+            f"{BIOMART['FINAL_FILE']} not found. Run process_biomart() first.")
 
     return sqlite3.connect(processed_file)
 
+GENE_PLANT_MAPPING = {
+  "FOLDER":"arabidopsis_genes",
+  "FILE":"gene_aliases_20241001.txt",
+  "URL": "https://www.arabidopsis.org/api/download-files/download?filePath=Public_Data_Releases/TAIR_Data_20240930/gene_aliases_20241001.txt.gz"
+}
+
+def download_plant_gene_mapping(data_path,rerun=False):
+    """Download dataset dataset"""
+    raw_path = Path(data_path) / f"{GENE_PLANT_MAPPING['FOLDER']}"
+    raw_path.mkdir(parents=True, exist_ok=True)
+    
+    file_path = pooch.retrieve(
+        url= GENE_PLANT_MAPPING['URL'],
+        known_hash=None,
+        path=raw_path,
+        fname= GENE_PLANT_MAPPING["FILE"]
+    )
+    
+    print(f"Downloaded  DB to {file_path}")
+    return file_path
+
+def process_plant_gene_mapping(data_path,rerun=False):
+    """Process the tflist dataset """
+    return
+
+
+def load_plant_gene_mapping(data_path):
+    """Load hippie into memory"""
+    file = Path(data_path) / f"{GENE_PLANT_MAPPING['FOLDER']}" / f"{GENE_PLANT_MAPPING['FILE']}" 
+    print(file)
+    if not file.exists():
+        raise FileNotFoundError(f" {GENE_PLANT_MAPPING['FILE']} not found. Run setup_datasets() first.")
+    
+    df = pd.read_csv(file, sep="\t",encoding="latin1" ,names=["locus", "symbol", "full_name", "alias_type"])
+    locus_to_name = dict(zip(df["locus"], df["symbol"]))
+    return locus_to_name
+
+
+SPECIES_SLUG = {
+    "human": "homo_sapiens",
+    "arabidopsis": "arabidopsis_thaliana",
+}
+
+
+def get_promoter_sequence_online(gene_name, species="human", upstream=2000):
+    slug = SPECIES_SLUG[species]
+
+    lookup_url = f"https://rest.ensembl.org/lookup/symbol/{slug}/{gene_name}?content-type=application/json"
+    info = requests.get(lookup_url).json()
+
+    if "seq_region_name" not in info:
+        raise ValueError(f"Gene not found: {gene_name}. Response: {info}")
+
+    # print(info)
+    chrom = info["seq_region_name"]
+    strand = info["strand"]
+    tss = info["start"] if strand == 1 else info["end"]
+
+    if strand == 1:
+        region = f"{chrom}:{max(1, tss - upstream)}-{tss - 1}"
+    else:
+        region = f"{chrom}:{tss + 1}-{tss + upstream}"
+
+    seq_url = (
+        f"https://rest.ensembl.org/sequence/region/{slug}/{region}"
+        f"?content-type=text/plain&strand={strand}"
+    )
+
+    seq = requests.get(seq_url).text.strip().upper()
+
+    if not seq:
+        raise ValueError(f"Could not fetch promoter sequence for {gene_name}")
+
+    return seq
 
 
 GENE_DATASETS = {
@@ -203,8 +444,14 @@ GENE_DATASETS = {
         'download': download_biomart,
         'process': process_biomart,
         'load': load_biomart,
+    },
+    'plant_gene_mapping':{
+        'download':download_plant_gene_mapping,
+        'process': process_plant_gene_mapping,
+        'load': load_plant_gene_mapping
     }
 }
+
 
 def convert_genes(
     input: List[Any],
@@ -259,7 +506,8 @@ def convert_genes(
     print(f"  Unique values: {unique_count}")
     print(f"  Successfully mapped: {mapped_count}")
     print(f"  Failed to map: {unique_count - mapped_count}")
-    print(f"  Null results: {null_in_results} ({null_in_results/max(total,1)*100:.2f}%)")
+    print(
+        f"  Null results: {null_in_results} ({null_in_results/max(total, 1)*100:.2f}%)")
 
     return mapping_dict
 

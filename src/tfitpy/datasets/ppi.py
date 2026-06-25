@@ -75,7 +75,6 @@ def process_hippie(data_path,rerun=False):
     result.to_parquet(processed_file, index=False)
     print("Done")
 
-
 def load_hippie(data_path):
     """Load hippie into memory"""
     processed_file = Path(data_path) / f"{HIPPIE['FOLDER']}" / f"{HIPPIE['FINAL_FILE']}" 
@@ -121,7 +120,6 @@ STRINGDB = {
     "SCORE_THRESHOLD": 400,  # STRING scores are 0-1000; 400 = medium confidence
 }
 
-
 def download_stringdb(data_path, rerun=False):
     """Download STRING PPI dataset for human (taxon 9606)"""
     raw_path = Path(data_path) / f'{STRINGDB["FOLDER"]}'
@@ -153,7 +151,6 @@ def download_stringdb(data_path, rerun=False):
     print(f"Downloaded STRING links to {links_path}")
     print(f"Downloaded STRING info  to {info_path}")
     return links_path, info_path
-
 
 def process_stringdb(data_path, rerun=False):
     """
@@ -222,7 +219,6 @@ def process_stringdb(data_path, rerun=False):
     result.to_parquet(processed_file, index=False)
     print(f"Saved {len(result):,} edges  {processed_file}")
 
-
 def load_stringdb(data_path):
     """Load STRING DB into a NetworkX graph"""
     processed_file = Path(data_path) / STRINGDB["FOLDER"] / STRINGDB["FINAL_FILE"]
@@ -245,8 +241,6 @@ def load_stringdb(data_path):
 
     #print(f"STRING graph: {G.number_of_nodes():,} nodes, {G.number_of_edges():,} edges")
     return G
-
-
 
 ####### BIOGRID DB #######
 
@@ -285,7 +279,6 @@ def _parse_entrez(series: "pd.Series") -> "pd.Series":
               .astype("Int64")
     )
 
-
 def download_biogrid(data_path, rerun=False):
     """Download and unpack the BioGRID human MITAB file."""
     raw_path = Path(data_path) / BIOGRID["FOLDER"]
@@ -308,7 +301,6 @@ def download_biogrid(data_path, rerun=False):
     print(f"Downloaded and extracted BioGRID to {raw_path}")
     # Return the specific human file path
     return target_file
-
 
 def process_biogrid(data_path, rerun=False):
     """
@@ -374,7 +366,6 @@ def process_biogrid(data_path, rerun=False):
     result.to_parquet(processed_file, index=False)
     print(f"Saved {len(result):,} edges to {processed_file}")
 
-
 def load_biogrid(data_path):
     """Load BioGRID into a NetworkX graph."""
     processed_file = Path(data_path) / BIOGRID["FOLDER"] / BIOGRID["FINAL_FILE"]
@@ -398,6 +389,142 @@ def load_biogrid(data_path):
     #print(f"BioGRID graph: {G.number_of_nodes():,} nodes, {G.number_of_edges():,} edges")
     return G
 
+####### STRING DB (ARABIDOPSIS) #######
+STRINGDB_ARABIDOPSIS = {
+    "FOLDER": "stringdb_arabidopsis",
+    "RAW_FILE": "3702.protein.links.detailed.v12.0.txt.gz",   # Aligned with human "detailed" file
+    "INFO_FILE": "3702.protein.info.v12.0.txt.gz",            # Pointing to correct metadata mapping
+    "MAPPING_FILE": "ARATH_3702_idmapping.dat.gz",
+    "MAPPING_URL": "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/ARATH_3702_idmapping.dat.gz",  # NEW 
+    "FINAL_FILE": "stringdb_ppi_hgnc.parquet",
+    "columns": [
+        "protein1",
+        "protein2",
+        "neighborhood",
+        "neighborhood_transferred",
+        "fusion",
+        "cooccurence",
+        "homology",
+        "coexpression",
+        "coexpression_transferred",
+        "experiments",
+        "experiments_transferred",
+        "database",
+        "database_transferred",
+        "textmining",
+        "textmining_transferred",
+        "combined_score",
+    ],
+    "URL": "https://stringdb-downloads.org/download/protein.links.detailed.v12.0/3702.protein.links.detailed.v12.0.txt.gz",
+    "INFO_URL": "https://stringdb-downloads.org/download/protein.info.v12.0/3702.protein.info.v12.0.txt.gz",
+    "SCORE_THRESHOLD": 400,  
+}
+
+def download_stringdb_arabidopsis(data_path, rerun=False):
+    raw_path = Path(data_path) / STRINGDB_ARABIDOPSIS["FOLDER"]
+    raw_path.mkdir(parents=True, exist_ok=True)
+
+    links_path = raw_path / STRINGDB_ARABIDOPSIS["RAW_FILE"]
+    info_path  = raw_path / STRINGDB_ARABIDOPSIS["INFO_FILE"]
+    mapping_path = raw_path / STRINGDB_ARABIDOPSIS["MAPPING_FILE"]  # NEW
+
+    if not links_path.exists() or rerun:
+        pooch.retrieve(url=STRINGDB_ARABIDOPSIS["URL"], known_hash=None,
+                       path=raw_path, fname=STRINGDB_ARABIDOPSIS["RAW_FILE"])
+
+    if not info_path.exists() or rerun:
+        pooch.retrieve(url=STRINGDB_ARABIDOPSIS["INFO_URL"], known_hash=None,
+                       path=raw_path, fname=STRINGDB_ARABIDOPSIS["INFO_FILE"])
+
+    # NEW
+    if not mapping_path.exists() or rerun:
+        pooch.retrieve(url=STRINGDB_ARABIDOPSIS["MAPPING_URL"], known_hash=None,
+                       path=raw_path, fname=STRINGDB_ARABIDOPSIS["MAPPING_FILE"])
+
+    print(f"Downloaded STRING links to {links_path}")
+    print(f"Downloaded STRING info  to {info_path}")
+    print(f"Downloaded UniProt mapping to {mapping_path}")
+    return links_path, info_path, mapping_path
+
+
+def process_stringdb_arabidopsis(data_path, rerun=False):
+    raw_path      = Path(data_path) / STRINGDB_ARABIDOPSIS["FOLDER"]
+    raw_file      = raw_path / STRINGDB_ARABIDOPSIS["RAW_FILE"]
+    mapping_file  = raw_path / STRINGDB_ARABIDOPSIS["MAPPING_FILE"]
+    processed_file = raw_path / STRINGDB_ARABIDOPSIS["FINAL_FILE"]
+
+    if processed_file.exists() and not rerun:
+        print(f"File already exists: {processed_file}")
+        return
+
+    threshold = STRINGDB_ARABIDOPSIS["SCORE_THRESHOLD"]
+
+    # --- build UniProt -> AGI mapping ---
+    print("Loading UniProt -> AGI mapping …")
+    mapping_df = pd.read_csv(mapping_file, sep="\t", header=None, compression="gzip",
+                             names=["uniprot_id", "id_type", "id_value"])
+    tair_df = mapping_df[mapping_df["id_type"] == "TAIR"]
+    uniprot2agi = dict(zip(tair_df["uniprot_id"], tair_df["id_value"].str.upper()))
+    print(f"Loaded {len(uniprot2agi):,} UniProt -> AGI entries")
+
+    # --- load interactions ---
+    print("Loading STRING interactions …")
+    header = pd.read_csv(raw_file, sep=" ", compression="gzip", nrows=0)
+    available = set(header.columns)
+
+    OPTIONAL_SCORE_COLS = [
+        "experiments", "experiments_transferred",
+        "database", "database_transferred",
+        "coexpression", "coexpression_transferred",
+        "textmining", "textmining_transferred",
+    ]
+    extra_cols = [c for c in OPTIONAL_SCORE_COLS if c in available]
+    usecols = ["protein1", "protein2", "combined_score"] + extra_cols
+
+    df = pd.read_csv(raw_file, sep=" ", compression="gzip", usecols=usecols)
+    df = df[df["combined_score"] >= threshold].copy()
+    print(f"Retained {len(df):,} edges with combined_score >= {threshold}")
+
+    # --- map UniProt IDs -> AGI ---
+    df["node1"] = df["protein1"].str.split(".").str[1].map(uniprot2agi)
+    df["node2"] = df["protein2"].str.split(".").str[1].map(uniprot2agi)
+
+    unmapped = df["node1"].isna().sum() + df["node2"].isna().sum()
+    print(f"Unmapped proteins (dropped): {unmapped:,}")
+
+    df = df.dropna(subset=["node1", "node2"])
+    df = df[df["node1"] != df["node2"]]
+    print(f"After mapping and cleaning: {len(df):,} edges")
+
+    # --- normalize scores ---
+    score_cols = ["combined_score"] + extra_cols
+    df[score_cols] = df[score_cols] / 1000.0
+
+    df["edge_source"] = "stringdb_ppi"
+    result = df[["node1", "node2"] + score_cols + ["edge_source"]].copy()
+
+    all_nodes = pd.unique(result[["node1", "node2"]].values.ravel())
+    print(f"Unique genes in graph: {len(all_nodes):,}")
+    print(f"First 10 nodes: {list(all_nodes[:10])}")
+
+    result.to_parquet(processed_file, index=False)
+    print(f"Saved {len(result):,} edges to {processed_file}")
+
+
+def load_stringdb_arabidopsis(data_path):
+    """Load STRING DB into a NetworkX graph"""
+    processed_file = Path(data_path) / STRINGDB_ARABIDOPSIS["FOLDER"] / STRINGDB_ARABIDOPSIS["FINAL_FILE"]
+
+    if not processed_file.exists():
+        raise FileNotFoundError(
+            f"{STRINGDB_ARABIDOPSIS['FINAL_FILE']} not found. Run setup_datasets() first."
+        )
+
+    df = pd.read_parquet(processed_file)
+    edge_attr = [c for c in df.columns if c not in ("node1", "node2")]
+
+    G = nx.from_pandas_edgelist(df, source="node1", target="node2", edge_attr=edge_attr)
+    return G
 
 
 PPI_DATASETS = {
@@ -416,4 +543,9 @@ PPI_DATASETS = {
         "process": process_biogrid,
         "load": load_biogrid,
     },
+    'stringdb_arabidopsis': {
+        'download': download_stringdb_arabidopsis,
+        'process': process_stringdb_arabidopsis,
+        'load': load_stringdb_arabidopsis
+    }
 }

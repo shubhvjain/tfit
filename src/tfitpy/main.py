@@ -50,10 +50,10 @@ def load_cache(cache=None, methods=None, data_path=None):
     to_load = [ds for ds in needed if ds not in cache]
 
     if not to_load:
-        print("All required datasets already in cache.")
+        #print("All required datasets already in cache.")
         return cache
 
-    print(f"[pid {os.getpid()}] Loading {len(to_load)} dataset(s): {to_load}")
+    #print(f"[pid {os.getpid()}] Loading {len(to_load)} dataset(s): {to_load}")
     for ds_name in to_load:
         if ds_name not in DATASETS:
             raise ValueError(f"Dataset '{ds_name}' not found in registry.")
@@ -141,7 +141,7 @@ def compute_indices(
     new_methods_only=True,
     data_path=None,
     options={},
-    n_jobs=None,
+    n_jobs=None
 ):
     """
     Compute index columns for every row of *df* in parallel.
@@ -180,12 +180,11 @@ def compute_indices(
             if not any(col in df.columns for col in METHODS[m]["cols"])
         ]
         if not methods:
-            print("All requested columns already present — nothing to compute.")
+            # print("All requested columns already present — nothing to compute.")
             return df, {}
 
     n_workers = min(n_jobs or cpu_count(), len(df))
-    print(f"Computing {len(methods)} method(s) on {len(df)} rows "
-          f"using {n_workers} worker(s).")
+    # print(f"Computing {len(methods)} method(s) on {len(df)} rows using {n_workers} worker(s).")
 
     # Split into one chunk per worker; leftover rows go into the last chunk.
     chunks = [chunk for chunk in _split_dataframe(df, n_workers) if not chunk.empty]
@@ -208,16 +207,52 @@ def compute_indices(
         all_rows.extend(rows)
         merged_additional.update(add_data)
 
-    print(f"Done. Added columns for {len(methods)} method(s).")
+    #print(f"Done. Added columns for {len(methods)} method(s).")
     return pd.DataFrame(all_rows), merged_additional
 
-
-# -----------
-# Helper
-# -----------
 
 def _split_dataframe(df: pd.DataFrame, n: int):
     """Yield *n* roughly equal sub-DataFrames."""
     size = max(1, len(df) // n)
     for start in range(0, len(df), size):
         yield df.iloc[start: start + size]
+
+from tfitpy.indices.ppi import PPI_SCORES
+from tfitpy.indices.go import GO_SCORES,GO_EA
+from tfitpy.indices.binding_affinity import TFBA_SCORE
+from tfitpy.indices.distance_correlation import DCORR_SCORES
+
+def validate(sources,target,dataset_cache,organism="human",data_path=None,pairs=None,use_pairwise_cache=True,go_ea=False,ge_data=None):
+    """"""
+    scores = {}
+    evidence = {}
+
+    if pairs is None :
+        pairs = generate_tf_pairs(sources)
+
+    # PPI score
+    ppi_scores, ppi_evidence = PPI_SCORES(sources,target,dataset_cache,organism=organism,use_pairwise_cache=use_pairwise_cache,pairs=pairs)
+    scores = {**ppi_scores}
+    evidence["ppi"] = ppi_evidence
+
+    # GO
+    go_scores = GO_SCORES(sources,target,dataset_cache, organism=organism,use_pairwise_cache=use_pairwise_cache,pairs=pairs ,data_path=data_path)
+
+    scores = {**scores,**go_scores}
+    if go_ea:
+        go_ora = GO_EA(sources,target,dataset_cache, organism=organism)
+        evidence["go_ea"] = go_ora
+    
+    # TFBSA
+    tf_score,tf_evidence = TFBA_SCORE(sources,target,dataset_cache,organism=organism,use_pairwise_cache=use_pairwise_cache,data_path=data_path)
+    scores = {**scores,**tf_score}
+    evidence["tfbs"] = tf_evidence
+
+
+    # DCorr
+    dscore,devidence = DCORR_SCORES(sources,dataset_cache,target,organism=organism)
+    scores = {**scores,**dscore}
+    evidence["dcorr"] = devidence
+
+
+    return scores,evidence

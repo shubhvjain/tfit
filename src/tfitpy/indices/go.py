@@ -19,8 +19,8 @@ from goatools.semantic import (
     TermCounts, lin_sim, resnik_sim,
     get_info_content, deepest_common_ancestor
 )
-
-from tfitpy.utils import generate_tf_pairs
+from goatools.goea.go_enrichment_ns import GOEnrichmentStudyNS
+from tfitpy.utils import generate_tf_pairs, ORGANISM_METADATA
 
 
 def _jc_sim(term1: str, term2: str, godag: GODag, termcounts: TermCounts) -> Optional[float]:
@@ -299,8 +299,9 @@ def _go_scores_from_cache(sources: list, pairs: list, cache: pd.DataFrame) -> di
 
 def go_all_scores(
     sources: list,
-    datasets: dict = None,
+    dataset_caches: dict = None,
     pairs: list = None,
+    cache_key = "go",
     **kwargs,
 ) -> dict:
     """Compute all 3 GO similarity scores in a single pass over pairs.
@@ -314,7 +315,7 @@ def go_all_scores(
 
     Args:
         sources: List of gene identifiers in the regulatory module.
-        datasets: Dataset cache dict containing 'go' with keys:
+        dataset_caches: dataset_cache cache dict containing 'go' with keys:
                   'godag', 'gene2go'. Must be provided.
         pairs: Optional precomputed list of (g1, g2) tuples. If None,
                generated from sources via generate_tf_pairs().
@@ -326,31 +327,31 @@ def go_all_scores(
             goa_similarity_jc
 
     Raises:
-        ValueError: If datasets is None or 'go' key is missing.
+        ValueError: If dataset_caches is None or 'go' key is missing.
     """
 
         # Check if we have the cache
-    if datasets is not None and 'pairwise_score_cache' in datasets:
+    if dataset_caches is not None and 'pairwise_score_cache' in dataset_caches:
         # Fast path: use cache
-        cache = datasets['pairwise_score_cache']
+        cache = dataset_caches['pairwise_score_cache']
         #print("using fastcache for GO")
         return _go_scores_from_cache(sources, pairs, cache)
         
-    if datasets is None:
+    if dataset_caches is None:
         raise ValueError(
             "datasets cache is required. Create cache with load_datasets() first.")
-    if "go" not in datasets:
-        raise ValueError("Dataset dependency missing: 'go'")
+    if cache_key not in dataset_caches:
+        raise ValueError("dataset_cache dependency missing: 'go'")
 
-    godag = datasets["go"]["godag"]
-    gene2go = datasets["go"]["gene2go"]
+    godag = dataset_caches[cache_key]["godag"]
+    gene2go = dataset_caches[cache_key]["gene2go"]
 
     # TermCounts built once per row call, not once per method
     termcounts = TermCounts(godag, gene2go)
-
+    
     if pairs is None:
         pairs = generate_tf_pairs(sources)
-
+    # print(pairs)
     # Row-level terms cache: gene2go.get(gene) fetched once per gene,
     # reused across all pairs and all 3 methods that gene appears in.
     terms_cache: dict = {}
@@ -365,6 +366,7 @@ def go_all_scores(
         if gene2 not in terms_cache:
             terms_cache[gene2] = list(gene2go.get(gene2, set()))
 
+        # print(terms_cache)
         terms1 = terms_cache[gene1]
         terms2 = terms_cache[gene2]
 
@@ -396,3 +398,139 @@ GO_METHODS = {
         "datasets": ["pairwise_score_cache"],
     },
 }
+
+
+
+
+def GO_SCORES(sources,target,dataset_cache,organism="human",use_pairwise_cache=True,data_path=None,pairs=None):
+    """
+    """ 
+    source_names = sources
+    # if organism == "arabidopsis":
+    #     gkey = ORGANISM_METADATA[organism]["gene_mapping"]
+    #     gene_map = dataset_cache[gkey]
+    #     gene_map_rev = {v: k for k, v in gene_map.items()}
+
+    #     source_names =  [gene_map[s] for s in sources if s in gene_map.keys()]
+    #     target_name = gene_map[target]
+    #     use_pairwise_cache = False
+    #     print(source_names)
+
+    if pairs is None:
+        pairs = generate_tf_pairs(source_names)
+
+    if use_pairwise_cache :
+        pair_key =  ORGANISM_METADATA[organism]["pair_cache"]
+        if dataset_cache[pair_key] is None:
+            raise ValueError("No pair cache provided")
+        return _go_scores_from_cache(sources, pairs, dataset_cache[pair_key])
+
+        
+    else:
+        go_key = ORGANISM_METADATA[organism]["go_key"]
+        godag = dataset_cache[go_key]["godag"]
+        gene2go = dataset_cache[go_key]["gene2go"]
+        termcounts = TermCounts(godag, gene2go)
+        
+        terms_cache: dict = {}
+
+        lin_scores = []
+        resnik_scores = []
+        jc_scores = []
+
+        for gene1, gene2 in pairs:
+            if gene1 not in terms_cache:
+                terms_cache[gene1] = list(gene2go.get(gene1, set()))
+            if gene2 not in terms_cache:
+                terms_cache[gene2] = list(gene2go.get(gene2, set()))
+
+            # print(terms_cache)
+            terms1 = terms_cache[gene1]
+            terms2 = terms_cache[gene2]
+            # print(terms1)
+            # print(terms2)
+
+            # Each method gets pre-fetched terms — no redundant gene2go lookups
+            lin_scores.append(
+                _gene_sim_bma_with_terms(terms1, terms2, godag, termcounts, lin_sim))
+            resnik_scores.append(
+                _gene_sim_bma_with_terms(terms1, terms2, godag, termcounts, resnik_sim))
+            jc_scores.append(
+                _gene_sim_bma_with_terms(terms1, terms2, godag, termcounts, _jc_sim))
+
+        def _safe_mean(values: list) -> float:
+            arr = np.array(values, dtype=float)
+            arr = arr[np.isfinite(arr)]
+            return float(np.mean(arr)) if len(arr) > 0 else 0.0
+
+        return {
+            "goa_similarity_lin":    round(_safe_mean(lin_scores), 5),
+            "goa_similarity_resnik": round(_safe_mean(resnik_scores), 5),
+            "goa_similarity_jc":     round(_safe_mean(jc_scores), 5),
+        }
+
+
+def GO_EA(source,target,dataset_cache,organism="human",threshold=0.05):
+    """"""
+    go_key = ORGANISM_METADATA[organism]["go_key"]
+    godag = dataset_cache[go_key]["godag"]
+    gene2go = dataset_cache[go_key]["gene2go"]
+
+    background_gene_list = list(gene2go.keys())
+    bg_set = set(background_gene_list)
+    study_set = set(str(g).upper() for g in source) & bg_set
+
+    if len(study_set) < 2:
+        print("Not enough study genes with GO annotations.")
+        return []
+    
+    ns_map = {
+        'biological_process': 'BP',
+        'molecular_function':  'MF',
+        'cellular_component':  'CC',
+    }
+    ns2assoc = {'BP': {}, 'MF': {}, 'CC': {}}
+    for gene, go_ids in gene2go.items():
+        if gene not in bg_set:
+            continue
+        for go_id in go_ids:
+            if go_id not in godag:
+                continue
+            ns_key = ns_map.get(godag[go_id].namespace)
+            if ns_key is None:
+                continue
+            ns2assoc[ns_key].setdefault(gene, set()).add(go_id)
+
+    goea = GOEnrichmentStudyNS(
+        pop=bg_set,
+        ns2assoc=ns2assoc,
+        godag=godag,
+        propagate_counts=True,
+        alpha=threshold,
+        methods=['fdr_bh']
+    )
+
+    results_all = goea.run_study(study_set, prt=None)
+    significant = [r for r in results_all if getattr(
+        r, 'p_fdr_bh', 1.0) <= threshold]
+
+    if not significant:
+        print("No significant GO terms found.")
+        return []
+
+    significant.sort(key=lambda r: getattr(r, 'p_fdr_bh', 1.0))
+
+    # Build return list
+    out = []
+    for res in significant:
+        min_p = float(getattr(res, 'p_fdr_bh'))
+        score = -np.log10(min_p) if min_p > 0 else -np.log10(1e-300)
+        out.append({
+            "GO":    res.GO,
+            "name":  res.name,
+            "p_fdr": round(min_p, 5) if min_p > 1e-5 else min_p,
+            "score": round(score, 5),
+            "ns":    res.NS,
+        })
+
+    return pd.DataFrame(out)

@@ -8,8 +8,3 @@ METHODS = {
   ** GO_METHODS,
   ** GRN_METHODS
 }
-
-def list():
-  """
-  List all indices available
-  """

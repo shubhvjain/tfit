@@ -311,7 +311,14 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
         target_name = gene_map[target]
         # get the promoter sequence of the target
 
-        target_promoter = get_promoter_sequence_online(target_name, organism)
+        try:
+            target_promoter = get_promoter_sequence_online(
+                target_name, organism
+            )
+        except ValueError:
+            return summary, None
+        
+        # target_promoter = get_promoter_sequence_online(target_name, organism)
         # map loci ids to gene names
         source_name = [gene_map[s] for s in sources if s in gene_map.keys()]
         # print(source)
@@ -330,8 +337,7 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
         for motif in motif_list:
             # print(motif.name)
             gname = motif.name
-            gname_rev = gene_map_rev[gname]
-
+            gname_rev = gene_map_rev.get(gname, "")
             sc = calculate_trap_affinity(target_promoter, dict(motif.counts))
             # print(sc)
             row = {
@@ -343,16 +349,18 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
 
         evidence = pd.DataFrame(scores)
         # print(evidence)
-        observed_trap = round(float(evidence["value"].mean()), 5)
-        summary["TFBS_affinity"] = observed_trap
+        if not evidence.empty and "value" in evidence.columns:
+            observed_trap = round(float(evidence["value"].mean()), 5)
+            summary["TFBS_affinity"] = observed_trap
 
-        observed_trap_sum = round(float(evidence["value"].sum()), 5)
-        summary["TFBS_affinity_sum"] = observed_trap_sum
+            observed_trap_sum = round(float(evidence["value"].sum()), 5)
+            summary["TFBS_affinity_sum"] = observed_trap_sum
+        
 
         # print(trap_value)
         # permutation testing
         bg_key = ORGANISM_METADATA[organism]["source_background_list"]
-        background_genes = dataset_cache[bg_key]["Gene_ID"].tolist()
+        background_genes = dataset_cache[bg_key]
         # print(background_genes)
         if summary["TF_found_per"] > 0:
             extreme_count = 0
@@ -369,7 +377,7 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
                 for motif in motif_list1:
                     # print(motif.name)
                     gname = motif.name
-                    gname_rev = gene_map_rev[gname]
+                    gname_rev = gene_map_rev.get(gname, "")
 
                     sc = calculate_trap_affinity(
                         target_promoter, dict(motif.counts))
@@ -399,7 +407,7 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
     else:
         raise ValueError("Invalid human")
 
-    if evidence is not None:
+    if evidence is not None and not evidence.empty:
         evidence = evidence.sort_values(by="value")
 
     return summary, evidence

@@ -130,6 +130,12 @@ def get_regulator_list(data_path,organism="human"):
     else:
         raise ValueError("unknown organism")
 
+def get_regulator_list_plant(data_path):
+    """"""
+    tf = load_tflist_plant(data_path)
+    tf_list = tf["Gene_ID"].tolist() 
+    return tf_list
+
 
 TF_DATASET = {
     'tflist': {
@@ -145,7 +151,7 @@ TF_DATASET = {
     'tflist_plant':{
         'download': download_tflist_plant,
         'process': process_tflist_plant,
-        'load': load_tflist_plant
+        'load': get_regulator_list_plant
     },
     'tflist_human':{
         'download': download_tflist,

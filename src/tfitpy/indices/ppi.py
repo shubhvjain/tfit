@@ -210,10 +210,11 @@ def induced_network_metrics(sources,target, ppi, null_graphs, mapping):
         if null_lcc_ratio >= obs_lcc_ratio:
             lcc_hits += 1
 
-        null_target_neighbors = set(g_null.neighbors(target_idx))
-        null_tc_count = len(null_target_neighbors.intersection(m_indices))
-        if (null_tc_count / n_m) >= obs_tc_ratio:
-            tc_hits += 1
+        if target_idx is not None:        
+            null_target_neighbors = set(g_null.neighbors(target_idx))
+            null_tc_count = len(null_target_neighbors.intersection(m_indices))
+            if (null_tc_count / n_m) >= obs_tc_ratio:
+                tc_hits += 1
 
     # --- 4. Final Scores (-ln(p)) ---
     p_density = (density_hits + 1) / (R + 1)
@@ -222,8 +223,12 @@ def induced_network_metrics(sources,target, ppi, null_graphs, mapping):
     p_lcc = (lcc_hits + 1) / (R + 1)
     lcc_score = max(0.0, -np.log(p_lcc))
 
-    p_tc = (tc_hits + 1) / (R + 1)
-    target_connectivity_score = max(-np.log(p_tc),0.0)
+    if target_idx is not None:
+        p_tc = (tc_hits + 1) / (R + 1)
+        target_connectivity_score = max(-np.log(p_tc), 0.0)
+    else:
+        # target not in PPI: define as zero enrichment
+        target_connectivity_score = 0.0
 
     return obs_density, density_score, obs_lcc_ratio, lcc_score, obs_tc_ratio, target_connectivity_score
 

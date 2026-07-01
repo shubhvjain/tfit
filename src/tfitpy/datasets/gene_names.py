@@ -360,7 +360,7 @@ def load_biomart(data_path):
 
 GENE_PLANT_MAPPING = {
   "FOLDER":"arabidopsis_genes",
-  "FILE":"gene_aliases_20241001.txt",
+  "FILE":"gene_aliases_20241001.txt.gz",
   "URL": "https://www.arabidopsis.org/api/download-files/download?filePath=Public_Data_Releases/TAIR_Data_20240930/gene_aliases_20241001.txt.gz"
 }
 

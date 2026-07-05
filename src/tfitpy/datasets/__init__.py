@@ -1,6 +1,6 @@
 from pathlib import Path
 import os
-
+import igraph as ig
 from tfitpy.datasets.ppi import PPI_DATASETS
 from tfitpy.datasets.ppi_networks import PPI_NULL_NETWORKS
 from tfitpy.datasets.grn import GRN_DATASETS
@@ -11,7 +11,8 @@ from tfitpy.datasets.binding import BINDING_DATASET
 from tfitpy.datasets.cache_binding import BINDING_CACHE
 from  tfitpy.datasets.cache_pairwise_scores import PAIRWISE_CACHE
 from tfitpy.datasets.cache_dcorr import generate_source_dcorr_cache,generate_target_dcorr_cache
-from tfitpy.utils import ORGANISM_METADATA
+from tfitpy.utils import ORGANISM_METADATA, get_valid_gene_expression
+
 
 HUMAN_DATASETS = { 
     "stringdb": PPI_DATASETS["stringdb"],
@@ -42,7 +43,8 @@ arabidopsis_DATASETS  = {
 
 arabidopsis_CACHE = {}
 
-def load(data_path, organism="human", load_cache=True,generate_dcorr_cache=True,gene_expression_data=None,targets=[]):
+
+def load(data_path, organism="human", load_cache=True,generate_dcorr_cache=False,gene_expression_data=None,targets=[]):
     """
     return a dict of datasets required to generate indices. This can be called once and reused.
     """
@@ -58,10 +60,17 @@ def load(data_path, organism="human", load_cache=True,generate_dcorr_cache=True,
         org_cache = arabidopsis_CACHE
     else:
         raise ValueError('invalid organism')
-  
 
     for d in org_dataset.keys():
         dataset_loaded[d] = org_dataset[d]["load"](data_path)
+
+    ppi_graph_keys = ORGANISM_METADATA[organism]["ppi_keys"]
+    # print(ppi_graph_keys)
+    for p in ppi_graph_keys:
+        if p in dataset_loaded:
+            g_ig = ig.Graph.from_networkx(dataset_loaded[p])
+            dataset_loaded[f"{p}_ig"] = g_ig
+
     if load_cache:
         for d in org_cache.keys():
             dataset_loaded[d] = org_cache[d]["load"](data_path)
@@ -69,6 +78,7 @@ def load(data_path, organism="human", load_cache=True,generate_dcorr_cache=True,
     if generate_dcorr_cache:
         if gene_expression_data is None :
             raise ValueError("Expression data not provided")
+        gene_expression_data = get_valid_gene_expression(gene_expression_data)
         dataset_loaded["gene_expression"] = gene_expression_data
 
         source_list_key  = ORGANISM_METADATA[organism]["source_background_list"]
@@ -78,9 +88,9 @@ def load(data_path, organism="human", load_cache=True,generate_dcorr_cache=True,
         #  generate source target cache
         if targets is not None:
             dataset_loaded["dcorr_target_cache"] = generate_target_dcorr_cache(gene_expression_data,source_list,targets)
-
+        
+    print("dataset loaded")
     return dataset_loaded
-
 
 
 DATASETS = {

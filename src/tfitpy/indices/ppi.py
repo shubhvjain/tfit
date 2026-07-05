@@ -9,6 +9,23 @@ from scipy.stats import hypergeom
 from tfitpy.utils import ORGANISM_METADATA, INDICES_DATA
 import igraph as ig
 
+def _zscore(obs, null_values, eps=1e-12):
+    """Z-score of observed value against a null distribution."""
+    mu = np.mean(null_values)
+    sigma = np.std(null_values, ddof=1) if len(null_values) > 1 else 0.0
+    if sigma < eps:
+        return 0.0 if abs(obs - mu) < eps else np.sign(obs - mu) * np.inf
+    return float((obs - mu) / sigma)
+
+def _clean_value(v, ndigits=5):
+    # Convert numpy scalar to Python scalar
+    if isinstance(v, np.generic):
+        v = v.item()
+    # Only round numeric types
+    if isinstance(v, (int, float)):
+        return round(v, ndigits)
+    return v
+
 # -----
 # Index 1 : PPI Shared Partners Index
 # ------
@@ -77,13 +94,7 @@ def shared_partners_pairwise(tf1, tf2, ppi_graph, background_size):
     return float(S), P, c
 
 
-def shared_partners_score(sources, ppi_network=None, pairs=None):
-    """Computes the shared PPI partners score for a TF regulatory module.
-
-    For each TF pair derived from sources, computes the hypergeometric
-    shared-partners score and aggregates all pairwise scores into a single
-    module-level index using the mean.
-    """
+def shared_partners_score(sources, ppi_network=None, pairs=None, top_n=None):
     if ppi_network is None:
         raise ValueError("No graph provided")
 
@@ -95,14 +106,10 @@ def shared_partners_score(sources, ppi_network=None, pairs=None):
 
     for tf1, tf2 in pairs:
         score, p_value, common_partner_count = shared_partners_pairwise(
-            tf1=tf1,
-            tf2=tf2,
-            ppi_graph=ppi_network,
-            background_size=background_size,
+            tf1=tf1, tf2=tf2, ppi_graph=ppi_network, background_size=background_size,
         )
         scores.append(score)
 
-    # Convert to numpy array to clean inf / nan efficiently
     scores_arr = np.array(scores, dtype=float)
     finite_mask = np.isfinite(scores_arr)
     cleaned_scores = scores_arr[finite_mask]
@@ -110,8 +117,10 @@ def shared_partners_score(sources, ppi_network=None, pairs=None):
     if cleaned_scores.size == 0:
         return 0.0
 
-    return float(cleaned_scores.mean())
+    if top_n is not None:
+        cleaned_scores = np.sort(cleaned_scores)[::-1][:top_n]
 
+    return float(cleaned_scores.mean())
 
 # =========|
 # Index 2
@@ -129,13 +138,11 @@ def shortest_path_pairwise(tf1, tf2, ppi_graph):
     except nx.NetworkXNoPath:
         return 0.0, float('inf')
 
-def shortest_path_score(sources, ppi_network=None):
-    """Computes the aggregate shortest-path score for a TF regulatory module."""
+def shortest_path_score(sources, ppi_network=None, top_n=None):
     if ppi_network is None:
         raise ValueError("No graph provided")
 
     pairs = generate_tf_pairs(sources)
-
     scores = []
 
     for tf1, tf2 in pairs:
@@ -146,8 +153,40 @@ def shortest_path_score(sources, ppi_network=None):
     if len(scores) == 0:
         return 0.0
 
-    return float(np.mean(scores))
+    scores_arr = np.array(scores, dtype=float)
+    if top_n is not None:
+        scores_arr = np.sort(scores_arr)[::-1][:top_n]
 
+    return float(scores_arr.mean())
+
+
+def shared_and_path_zscores(sources, ppi_network, source_list, pairs=None, R=50, seed=None):
+    """Computes observed shared-partners and shortest-path scores, plus z-scores
+    against R random same-size modules drawn from source_list, using the real PPI network."""
+
+    if pairs is None:
+        pairs = generate_tf_pairs(sources)
+
+    obs_partner = shared_partners_score(sources, ppi_network, pairs)
+    obs_path = shortest_path_score(sources, ppi_network)
+
+    background = [g for g in source_list if g not in set(sources)]
+    n = len(sources)
+    rng = np.random.default_rng(seed)
+
+    null_partners = np.empty(R)
+    null_paths = np.empty(R)
+
+    for i in range(R):
+        random_sources = rng.choice(background, size=n, replace=False).tolist()
+        random_pairs = generate_tf_pairs(random_sources)
+        null_partners[i] = shared_partners_score(random_sources, ppi_network, random_pairs)
+        null_paths[i] = shortest_path_score(random_sources, ppi_network)
+
+    z_partner = _zscore(obs_partner, null_partners)
+    z_path = _zscore(obs_path, null_paths)
+
+    return obs_partner, z_partner, obs_path, z_path
 
 # =========|
 # Index 3
@@ -168,7 +207,7 @@ def induced_network_metrics(sources,target, ppi, null_graphs, mapping):
     target_idx = mapping.get(target)
         
     if n_m < 2:
-        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     possible_edges = (n_m * (n_m - 1)) / 2
 
@@ -194,26 +233,30 @@ def induced_network_metrics(sources,target, ppi, null_graphs, mapping):
     tc_hits = 0
     R = len(null_graphs)
     
+    null_densities = np.empty(R)
+    null_lccs = np.empty(R)
+    null_tcs = np.empty(R) if target_idx is not None else None
+
     for i, g_null in enumerate(null_graphs):
         sub_null = g_null.induced_subgraph(m_indices)
         e_null = sub_null.ecount()
-        
-        # Null Density
         null_density = e_null / possible_edges if possible_edges > 0 else 0.0
+        null_densities[i] = null_density
         if null_density >= obs_density:
             density_hits += 1
-            
-        # Null LCC Ratio
+
         null_lcc_count = sub_null.connected_components().giant().vcount() if e_null > 0 else 1
         null_lcc_ratio = null_lcc_count / n_m
-        
+        null_lccs[i] = null_lcc_ratio
         if null_lcc_ratio >= obs_lcc_ratio:
             lcc_hits += 1
 
-        if target_idx is not None:        
+        if target_idx is not None:
             null_target_neighbors = set(g_null.neighbors(target_idx))
             null_tc_count = len(null_target_neighbors.intersection(m_indices))
-            if (null_tc_count / n_m) >= obs_tc_ratio:
+            null_tc_ratio = null_tc_count / n_m
+            null_tcs[i] = null_tc_ratio
+            if null_tc_ratio >= obs_tc_ratio:
                 tc_hits += 1
 
     # --- 4. Final Scores (-ln(p)) ---
@@ -230,7 +273,11 @@ def induced_network_metrics(sources,target, ppi, null_graphs, mapping):
         # target not in PPI: define as zero enrichment
         target_connectivity_score = 0.0
 
-    return obs_density, density_score, obs_lcc_ratio, lcc_score, obs_tc_ratio, target_connectivity_score
+    density_z = _zscore(obs_density, null_densities)
+    lcc_z = _zscore(obs_lcc_ratio, null_lccs)
+    target_connectivity_z = _zscore(obs_tc_ratio, null_tcs) if target_idx is not None else 0.0
+
+    return obs_density, density_score, obs_lcc_ratio, lcc_score, obs_tc_ratio, target_connectivity_score,density_z,lcc_z,target_connectivity_z
 
 
 def get_ppi_interactions(sources,target,G,evidence_type="ppi"):
@@ -252,18 +299,10 @@ def get_ppi_interactions(sources,target,G,evidence_type="ppi"):
 #  optimized, main methods 
 # =========
 
-def _clean_value(v, ndigits=5):
-    # Convert numpy scalar to Python scalar
-    if isinstance(v, np.generic):
-        v = v.item()
-    # Only round numeric types
-    if isinstance(v, (int, float)):
-        return round(v, ndigits)
-    return v
 
-def _ppi_scores_from_cache(sources, pairs: list, cache: pd.DataFrame,ppi_keys,ppi_cache_indices) -> dict:
+
+def _ppi_scores_from_cache(sources, pairs, cache,ppi_keys,ppi_cache_indices, top_n=None):
     """Extract PPI scores from precomputed cache and aggregate."""
-    from tfitpy.utils import generate_tf_pairs
 
     if pairs is None:
         pairs = generate_tf_pairs(sources)
@@ -292,25 +331,69 @@ def _ppi_scores_from_cache(sources, pairs: list, cache: pd.DataFrame,ppi_keys,pp
         path_col = f'shortest_PPI_path_score_{db_key}'
         partner_col = f'shared_PPI_partners_score_{db_key}'
 
-        # Get valid scores
-        path_scores = relevant_rows[path_col].replace(
-            [np.inf, -np.inf], np.nan
-        ).dropna()
-        partner_scores = relevant_rows[partner_col].replace(
-            [np.inf, -np.inf], np.nan
-        ).dropna()
+        path_scores = relevant_rows[path_col].replace([np.inf, -np.inf], np.nan).dropna()
+        partner_scores = relevant_rows[partner_col].replace([np.inf, -np.inf], np.nan).dropna()
 
-        # Compute means
-        results[path_col] = round(
-            float(path_scores.mean()) if len(path_scores) > 0 else 0.0,
-            5
-        )
-        results[partner_col] = round(
-            float(partner_scores.mean()) if len(partner_scores) > 0 else 0.0,
-            5
-        )
+        if top_n is not None:
+            path_scores = path_scores.sort_values(ascending=False).head(top_n)
+            partner_scores = partner_scores.sort_values(ascending=False).head(top_n)
+
+        results[path_col] = round(float(path_scores.mean()) if len(path_scores) > 0 else 0.0, 5)
+        results[partner_col] = round(float(partner_scores.mean()) if len(partner_scores) > 0 else 0.0, 5)
+    
     return results
 
+def _ppi_zscores_from_cache(sources, pairs, cache, ppi_keys, source_list, R=50, seed=None):
+    """Computes z-scores for shared-partners and shortest-path scores per db_key,
+    using cache lookups for both observed and null (random module) scores."""
+
+    if pairs is None:
+        pairs = generate_tf_pairs(sources)
+
+    background = [g for g in source_list if g not in set(sources)]
+    n = len(sources)
+    rng = np.random.default_rng(seed)
+
+    # generate R random pair-sets once, reused across all db_keys
+    random_pair_sets = []
+    for _ in range(R):
+        random_sources = rng.choice(background, size=n, replace=False).tolist()
+        random_pair_sets.append(generate_tf_pairs(random_sources))
+
+    def _lookup_mean(pair_list, path_col, partner_col):
+        pair_tuples = [tuple(sorted([g1, g2])) for g1, g2 in pair_list]
+        try:
+            rows = cache.loc[pair_tuples]
+        except KeyError:
+            existing = [p for p in pair_tuples if p in cache.index]
+            if not existing:
+                return 0.0, 0.0
+            rows = cache.loc[existing]
+
+        path_scores = rows[path_col].replace([np.inf, -np.inf], np.nan).dropna()
+        partner_scores = rows[partner_col].replace([np.inf, -np.inf], np.nan).dropna()
+
+        obs_path = float(path_scores.mean()) if len(path_scores) > 0 else 0.0
+        obs_partner = float(partner_scores.mean()) if len(partner_scores) > 0 else 0.0
+        return obs_partner, obs_path
+
+    results = {}
+
+    for db_key in ppi_keys:
+        path_col = f'shortest_PPI_path_score_{db_key}'
+        partner_col = f'shared_PPI_partners_score_{db_key}'
+
+        obs_partner, obs_path = _lookup_mean(pairs, path_col, partner_col)
+
+        null_partners = np.empty(R)
+        null_paths = np.empty(R)
+        for i, random_pairs in enumerate(random_pair_sets):
+            null_partners[i], null_paths[i] = _lookup_mean(random_pairs, path_col, partner_col)
+
+        results[f"{partner_col}_z"] = round(_zscore(obs_partner, null_partners), 5)
+        results[f"{path_col}_z"] = round(_zscore(obs_path, null_paths), 5)
+
+    return results
 
 
 def PPI_SCORES(sources,target,dataset_cache,organism="human",use_pairwise_cache=True,pairs=None):
@@ -325,35 +408,46 @@ def PPI_SCORES(sources,target,dataset_cache,organism="human",use_pairwise_cache=
     results = {}
     source_pairs = generate_tf_pairs(sources) if pairs is None else pairs
 
+    source_list_key  = ORGANISM_METADATA[organism]["source_background_list"]
+    source_list = dataset_cache[source_list_key]
+
     if use_pairwise_cache :
-        if dataset_cache[pair_cache_key] is  None:
+        if dataset_cache[pair_cache_key] is None:
             raise ValueError("No cache data provided")
         pairwise_cache = dataset_cache[pair_cache_key]
-        cache_results = _ppi_scores_from_cache(sources,source_pairs,pairwise_cache,ppi_keys,ppi_cache_indices)
-        results = {**cache_results}
+        cache_results = _ppi_scores_from_cache(sources, source_pairs, pairwise_cache, ppi_keys, ppi_cache_indices)
+        top25_results = _ppi_scores_from_cache(sources, source_pairs, pairwise_cache, ppi_keys, ppi_cache_indices, top_n=25)
+        top25_results = {f"{k}_top25": v for k, v in top25_results.items()}
+        z_results = _ppi_zscores_from_cache(sources, source_pairs, pairwise_cache, ppi_keys, source_list, R=100)    
+        results = {**cache_results, **top25_results,**z_results}
     else:
-        # compute all needed ppi indices 
         for p in ppi_keys:
             g = dataset_cache[p]
-            s1 = shared_partners_score(sources,g,source_pairs) 
-            results[f"shared_PPI_partners_score_{p}"]= s1
-            s2 = shortest_path_score(sources,g)
-            results[f"shortest_PPI_path_score_{p}"]= s2
+            s1 = shared_partners_score(sources, g, source_pairs)
+            results[f"shared_PPI_partners_score_{p}"] = s1
+            s2 = shortest_path_score(sources, g)
+            results[f"shortest_PPI_path_score_{p}"] = s2
+            results[f"shared_PPI_partners_score_{p}_top25"] = shared_partners_score(sources, g, source_pairs, top_n=25)
+            results[f"shortest_PPI_path_score_{p}_top25"] = shortest_path_score(sources, g, top_n=25)
     
     evidence_edges = []
     for p in ppi_keys:
-        g = dataset_cache[p]
-        g_ig = ig.Graph.from_networkx(g)
+        # g = dataset_cache[p]
+        g_ig = dataset_cache[f"{p}_ig"]        
         # network analysis 
         n,m = dataset_cache[f"{p}_null"]
-        obs_density, density_score, obs_lcc_ratio, lcc_score, obs_tc_ratio, target_connectivity_score = induced_network_metrics(sources,target,g_ig,n,m)
+        obs_density, density_score, obs_lcc_ratio, lcc_score, obs_tc_ratio, target_connectivity_score,density_z,lcc_z,target_connectivity_z = induced_network_metrics(sources,target,g_ig,n,m)
         results[f"density_{p}"] = obs_density
         results[f"density_score_{p}"] = density_score
         results[f"lcc_{p}"] = obs_lcc_ratio
         results[f"lcc_score_{p}"] = lcc_score
         results[f"tc_{p}"] = obs_tc_ratio
         results[f"tc_score_{p}"] = target_connectivity_score
+        results[f"density_z_{p}"] = density_z
+        results[f"lcc_z_{p}"] = lcc_z
+        results[f"tc_z_{p}"] = target_connectivity_z
         # ppi evidence 
+        g = dataset_cache[p]
         edges = get_ppi_interactions(sources,target,g,f"{p}")
         evidence_edges.append(edges)
 
@@ -362,167 +456,167 @@ def PPI_SCORES(sources,target,dataset_cache,organism="human",use_pairwise_cache=
     return results, edges
 
 
-def _ppi_single_pass(
-    pairs: list,
-    graph: nx.Graph,
-    background_size: int,
-):
-    """Single pass over pairs computing both shortest-path and shared-partners scores.
+# def _ppi_single_pass(
+#     pairs: list,
+#     graph: nx.Graph,
+#     background_size: int,
+# ):
+#     """Single pass over pairs computing both shortest-path and shared-partners scores.
 
-    For each pair, computes:
-      - shortest path proximity score: 1/length (0.0 if no path)
-      - shared partners hypergeometric score: -log10(p) (0.0 if no overlap)
+#     For each pair, computes:
+#       - shortest path proximity score: 1/length (0.0 if no path)
+#       - shared partners hypergeometric score: -log10(p) (0.0 if no overlap)
 
-    Uses a row-level neighbor cache so each TF's neighbor set is fetched
-    only once per call, regardless of how many pairs it appears in.
+#     Uses a row-level neighbor cache so each TF's neighbor set is fetched
+#     only once per call, regardless of how many pairs it appears in.
 
-    Args:
-        pairs: List of (tf1, tf2) tuples.
-        graph: NetworkX PPI graph for this database.
-        background_size: Number of nodes in graph, used as hypergeometric N.
+#     Args:
+#         pairs: List of (tf1, tf2) tuples.
+#         graph: NetworkX PPI graph for this database.
+#         background_size: Number of nodes in graph, used as hypergeometric N.
 
-    Returns:
-        Tuple of (shortest_path_score, shared_partners_score) — both are
-        means across valid pairs, 0.0 if no valid scores exist.
-    """
-    # Row-level neighbor cache: avoids recomputing set(G.neighbors(tf))
-    # for TFs that appear in multiple pairs within this row.
-    neighbor_cache: dict = {}
+#     Returns:
+#         Tuple of (shortest_path_score, shared_partners_score) — both are
+#         means across valid pairs, 0.0 if no valid scores exist.
+#     """
+#     # Row-level neighbor cache: avoids recomputing set(G.neighbors(tf))
+#     # for TFs that appear in multiple pairs within this row.
+#     neighbor_cache: dict = {}
 
-    path_scores = []
-    partner_scores = []
+#     path_scores = []
+#     partner_scores = []
 
-    # print(pairs)
-    # print(graph)
-    # print(list(graph.nodes)[:10])
-    for tf1, tf2 in pairs:
+#     # print(pairs)
+#     # print(graph)
+#     # print(list(graph.nodes)[:10])
+#     for tf1, tf2 in pairs:
 
-        # --- shortest path ---
-        if tf1 not in graph or tf2 not in graph:
-            path_scores.append(0.0)
-        else:
-            try:
-                length = nx.shortest_path_length(graph, tf1, tf2)
-                #print(length)
-                path_scores.append(1.0 / length if length > 0 else 1.0)
-            except nx.NetworkXNoPath:
-                path_scores.append(0.0)
+#         # --- shortest path ---
+#         if tf1 not in graph or tf2 not in graph:
+#             path_scores.append(0.0)
+#         else:
+#             try:
+#                 length = nx.shortest_path_length(graph, tf1, tf2)
+#                 #print(length)
+#                 path_scores.append(1.0 / length if length > 0 else 1.0)
+#             except nx.NetworkXNoPath:
+#                 path_scores.append(0.0)
 
-        # --- shared partners (neighbor sets cached at row level) ---
-        if tf1 not in neighbor_cache:
-            neighbor_cache[tf1] = (
-                set(graph.neighbors(tf1)) if tf1 in graph else set()
-            )
-        if tf2 not in neighbor_cache:
-            neighbor_cache[tf2] = (
-                set(graph.neighbors(tf2)) if tf2 in graph else set()
-            )
+#         # --- shared partners (neighbor sets cached at row level) ---
+#         if tf1 not in neighbor_cache:
+#             neighbor_cache[tf1] = (
+#                 set(graph.neighbors(tf1)) if tf1 in graph else set()
+#             )
+#         if tf2 not in neighbor_cache:
+#             neighbor_cache[tf2] = (
+#                 set(graph.neighbors(tf2)) if tf2 in graph else set()
+#             )
 
-        n1 = neighbor_cache[tf1]
-        n2 = neighbor_cache[tf2]
-        N1, N2 = len(n1), len(n2)
-        c = len(n1 & n2)
-        if N1 == 0 or N2 == 0 or c == 0:
-            # print("none")
-            partner_scores.append(0.0)
-        else:
-            P = _hypergeometric_pvalue(background_size, N1, N2, c)
+#         n1 = neighbor_cache[tf1]
+#         n2 = neighbor_cache[tf2]
+#         N1, N2 = len(n1), len(n2)
+#         c = len(n1 & n2)
+#         if N1 == 0 or N2 == 0 or c == 0:
+#             # print("none")
+#             partner_scores.append(0.0)
+#         else:
+#             P = _hypergeometric_pvalue(background_size, N1, N2, c)
             
-            S = float("inf") if P <= 0.0 else -np.log10(P)
-            partner_scores.append(S)
+#             S = float("inf") if P <= 0.0 else -np.log10(P)
+#             partner_scores.append(S)
             
-    # Aggregate: mean over valid (finite, non-nan) scores
-    def _safe_mean(values: list) -> float:
-        arr = np.array(values, dtype=float)
-        arr = arr[np.isfinite(arr)]
-        return float(np.mean(arr)) if len(arr) > 0 else 0.0
+#     # Aggregate: mean over valid (finite, non-nan) scores
+#     def _safe_mean(values: list) -> float:
+#         arr = np.array(values, dtype=float)
+#         arr = arr[np.isfinite(arr)]
+#         return float(np.mean(arr)) if len(arr) > 0 else 0.0
 
-    # print(path_scores)
-    # print(partner_scores)
-    return _safe_mean(path_scores), _safe_mean(partner_scores)
-
-
-_PPI_DB_KEYS = ["hippie", "stringdb", "biogrid"]
-def ppi_all_scores(
-    sources: list,
-    datasets: dict = None,
-    pairs: list = None,
-    **kwargs,
-) -> dict:
-    """Compute all 6 PPI scores in a single pass per database.
-
-    For each of the three PPI databases (hippie, stringdb, biogrid), makes
-    one pass over all TF pairs to compute both the shortest-path proximity
-    score and the shared-partners hypergeometric score simultaneously.
-
-    This is equivalent to calling shortest_path_score and shared_partners
-    separately for each database, but with half the graph traversals.
-
-    Args:
-        sources: List of source TF identifiers in the regulatory module.
-        datasets: Dataset cache dict containing 'hippie', 'stringdb', 'biogrid'
-                  NetworkX graphs. Must be provided.
-        pairs: Optional precomputed list of (tf1, tf2) tuples. If None,
-               generated from sources via generate_tf_pairs().
-
-    Returns:
-        Dict with 6 keys:
-            shortest_PPI_path_score_hippie
-            shortest_PPI_path_score_stringdb
-            shortest_PPI_path_score_biogrid
-            shared_PPI_partners_score_hippie
-            shared_PPI_partners_score_stringdb
-            shared_PPI_partners_score_biogrid
-
-    Raises:
-        ValueError: If datasets is None or any required db key is missing.
-    """
-    # Check if we have the cache
-    if datasets is not None and 'pairwise_score_cache' in datasets:
-        # Fast path: use cache
-        cache = datasets['pairwise_score_cache']
-        # print("using fastcache")
-        return _ppi_scores_from_cache(sources, pairs, cache)
-
-    if datasets is None:
-        raise ValueError(
-            "datasets cache is required. Create cache with load_datasets() first.")
-
-    missing = [k for k in _PPI_DB_KEYS if k not in datasets]
-    if missing:
-        raise ValueError(f"Dataset dependencies missing: {missing}")
-
-    if pairs is None:
-        pairs = generate_tf_pairs(sources)
-
-    results = {}
-
-    for db_key in _PPI_DB_KEYS:
-        graph = datasets[db_key]
-        background_size = len(graph.nodes())
-
-        path_score, partner_score = _ppi_single_pass(
-            pairs, graph, background_size)
-
-        results[f"shortest_PPI_path_score_{db_key}"] = round(path_score, 5)
-        results[f"shared_PPI_partners_score_{db_key}"] = round(
-            partner_score, 5)
-
-    return results
+#     # print(path_scores)
+#     # print(partner_scores)
+#     return _safe_mean(path_scores), _safe_mean(partner_scores)
 
 
-PPI_METHODS = {
-    "ppi": {
-        "func": ppi_all_scores,
-        "datasets": ["pairwise_score_cache"],
-        "type": "df_columns",
-        "cols": [
-            "shortest_PPI_path_score_hippie",
-            "shortest_PPI_path_score_stringdb",
-            "shortest_PPI_path_score_biogrid",
-            "shared_PPI_partners_score_hippie",
-            "shared_PPI_partners_score_stringdb",
-            "shared_PPI_partners_score_biogrid",
-        ],
-    },
-}
+# _PPI_DB_KEYS = ["hippie", "stringdb", "biogrid"]
+# def ppi_all_scores(
+#     sources: list,
+#     datasets: dict = None,
+#     pairs: list = None,
+#     **kwargs,
+# ) -> dict:
+#     """Compute all 6 PPI scores in a single pass per database.
+
+#     For each of the three PPI databases (hippie, stringdb, biogrid), makes
+#     one pass over all TF pairs to compute both the shortest-path proximity
+#     score and the shared-partners hypergeometric score simultaneously.
+
+#     This is equivalent to calling shortest_path_score and shared_partners
+#     separately for each database, but with half the graph traversals.
+
+#     Args:
+#         sources: List of source TF identifiers in the regulatory module.
+#         datasets: Dataset cache dict containing 'hippie', 'stringdb', 'biogrid'
+#                   NetworkX graphs. Must be provided.
+#         pairs: Optional precomputed list of (tf1, tf2) tuples. If None,
+#                generated from sources via generate_tf_pairs().
+
+#     Returns:
+#         Dict with 6 keys:
+#             shortest_PPI_path_score_hippie
+#             shortest_PPI_path_score_stringdb
+#             shortest_PPI_path_score_biogrid
+#             shared_PPI_partners_score_hippie
+#             shared_PPI_partners_score_stringdb
+#             shared_PPI_partners_score_biogrid
+
+#     Raises:
+#         ValueError: If datasets is None or any required db key is missing.
+#     """
+#     # Check if we have the cache
+#     if datasets is not None and 'pairwise_score_cache' in datasets:
+#         # Fast path: use cache
+#         cache = datasets['pairwise_score_cache']
+#         # print("using fastcache")
+#         return _ppi_scores_from_cache(sources, pairs, cache)
+
+#     if datasets is None:
+#         raise ValueError(
+#             "datasets cache is required. Create cache with load_datasets() first.")
+
+#     missing = [k for k in _PPI_DB_KEYS if k not in datasets]
+#     if missing:
+#         raise ValueError(f"Dataset dependencies missing: {missing}")
+
+#     if pairs is None:
+#         pairs = generate_tf_pairs(sources)
+
+#     results = {}
+
+#     for db_key in _PPI_DB_KEYS:
+#         graph = datasets[db_key]
+#         background_size = len(graph.nodes())
+
+#         path_score, partner_score = _ppi_single_pass(
+#             pairs, graph, background_size)
+
+#         results[f"shortest_PPI_path_score_{db_key}"] = round(path_score, 5)
+#         results[f"shared_PPI_partners_score_{db_key}"] = round(
+#             partner_score, 5)
+
+#     return results
+
+
+# PPI_METHODS = {
+#     "ppi": {
+#         "func": ppi_all_scores,
+#         "datasets": ["pairwise_score_cache"],
+#         "type": "df_columns",
+#         "cols": [
+#             "shortest_PPI_path_score_hippie",
+#             "shortest_PPI_path_score_stringdb",
+#             "shortest_PPI_path_score_biogrid",
+#             "shared_PPI_partners_score_hippie",
+#             "shared_PPI_partners_score_stringdb",
+#             "shared_PPI_partners_score_biogrid",
+#         ],
+#     },
+# }

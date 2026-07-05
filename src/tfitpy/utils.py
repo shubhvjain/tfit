@@ -204,3 +204,26 @@ def read_tcga(file_path, CONFIG=None, convert_gene_names=False):
         return df
     except Exception as e:
         raise ValueError(f"Error reading TCGA file {file_path}: {str(e)}")
+    
+
+def get_valid_gene_expression(gene_expression, gene_list=None):
+    """
+    Cleans gene_expression for use with dcorr cache functions:
+    - dedupes columns (keeps first occurrence)
+    - restricts to gene_list if provided (only genes present in columns)
+    - drops zero-variance genes (undefined dCor)
+    Returns (cleaned_df, dropped_genes)
+    """
+    ge = gene_expression.loc[:, ~gene_expression.columns.duplicated()]
+
+    if gene_list is not None:
+        valid = [g for g in gene_list if g in ge.columns]
+        ge = ge[valid]
+
+    variances = ge.var()
+    zero_var_genes = variances[variances == 0].index.tolist()
+
+    if zero_var_genes:
+        ge = ge.drop(columns=zero_var_genes)
+
+    return ge

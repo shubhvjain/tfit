@@ -168,6 +168,14 @@ def compute_tfbs_score_cache(target_gene, gene_list, cache_df):
 
     return tf_found_per, m, s, df_new
 
+def _zscore(observed, null_values):
+    """Helper: compute a z-score against a null distribution, guarding against zero variance."""
+    null_values = np.asarray(null_values, dtype=np.float64)
+    std = null_values.std(ddof=1)
+    if std == 0 or np.isnan(std):
+        return 0.0
+    return round(float((observed - null_values.mean()) / std), 5)
+
 
 def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_cache=True, data_path=None):
     """"""
@@ -180,12 +188,14 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
     summary = {
         "TFBS_affinity": 0,
         "TFBS_affinity_score": 0,
+        "TFBS_affinity_zscore": 0,
         "TF_found_per": 0,
         "TFBS_affinity_sum": 0,
         "TFBS_affinity_sum_score": 0,
+        "TFBS_affinity_sum_zscore": 0,
     }
 
-    n_permutations = 200
+    n_permutations = 100
     n_items = len(sources)
 
     if organism == "human":
@@ -207,11 +217,17 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
                 background_genes = dataset_cache[bg_key]
                 extreme_count = 0
                 extreme_count_sum = 0
+                null_means = []
+                null_sums = []
+
                 for _ in range(n_permutations):
                     simulated_genes = random.sample(background_genes, n_items)
 
                     p1, m1, s1, e1 = compute_tfbs_score_cache(
                         target, simulated_genes, trap_cache)
+
+                    null_means.append(m1)
+                    null_sums.append(s1)
 
                     if m1 >= m:
                         extreme_count += 1
@@ -222,10 +238,12 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
                 p_value = (extreme_count + 1) / (n_permutations + 1)
                 score = round(float(max(0.0, -np.log(p_value))), 5)
                 summary["TFBS_affinity_score"] = score
+                summary["TFBS_affinity_zscore"] = _zscore(m, null_means)
 
                 p_value_sum = (extreme_count_sum + 1) / (n_permutations + 1)
                 score_sum = round(float(max(0.0, -np.log(p_value_sum))), 5)
                 summary["TFBS_affinity_sum_score"] = score_sum
+                summary["TFBS_affinity_sum_zscore"] = _zscore(s, null_sums)
 
         else:
             target_promoter = get_gene_promoter_sequence_human(
@@ -263,6 +281,9 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
             if summary["TF_found_per"] > 0:
                 extreme_count = 0
                 extreme_count_sum = 0
+                null_means = []
+                null_sums = []
+
                 for _ in range(n_permutations):
                     simulated_genes = random.sample(background_genes, n_items)
 
@@ -272,24 +293,23 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
                     gene_scores = []
 
                     for motif in motif_list1:
-                        # print(motif.name)
-                        # gname = motif.name
                         sc = calculate_trap_affinity(
                             target_promoter, dict(motif.counts))
-                        # print(simulated_gene_name)
-                        # print(sc)
                         gene_scores.append(round(sc, 7))
 
                     mean_value = 0
                     if len(gene_scores) > 0:
                         mean_value = sum(gene_scores)/len(gene_scores)
 
-                    if mean_value >= observed_trap:
-                        extreme_count += 1
-
                     sum_value = 0
                     if len(gene_scores) > 0:
                         sum_value = sum(gene_scores)
+
+                    null_means.append(mean_value)
+                    null_sums.append(sum_value)
+
+                    if mean_value >= observed_trap:
+                        extreme_count += 1
 
                     if sum_value >= observed_trap_sum:
                         extreme_count_sum += 1
@@ -297,10 +317,12 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
                 p_value = (extreme_count + 1) / (n_permutations + 1)
                 score = round(float(max(0.0, -np.log(p_value))), 5)
                 summary["TFBS_affinity_score"] = score
+                summary["TFBS_affinity_zscore"] = _zscore(observed_trap, null_means)
 
                 p_value_sum = (extreme_count_sum + 1) / (n_permutations + 1)
                 score_sum = round(float(max(0.0, -np.log(p_value_sum))), 5)
                 summary["TFBS_affinity_sum_score"] = score_sum
+                summary["TFBS_affinity_sum_zscore"] = _zscore(observed_trap_sum, null_sums)
 
     elif organism == "arabidopsis":
         gkey = ORGANISM_METADATA[organism]["gene_mapping"]
@@ -365,6 +387,9 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
         if summary["TF_found_per"] > 0:
             extreme_count = 0
             extreme_count_sum = 0
+            null_means = []
+            null_sums = []
+
             for _ in range(n_permutations):
                 simulated_genes = random.sample(background_genes, n_items)
                 simulated_gene_name = [gene_map[s]
@@ -375,34 +400,37 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
                 gene_scores = []
 
                 for motif in motif_list1:
-                    # print(motif.name)
                     gname = motif.name
                     gname_rev = gene_map_rev.get(gname, "")
 
                     sc = calculate_trap_affinity(
                         target_promoter, dict(motif.counts))
-                    # print(simulated_gene_name)
-                    # print(sc)
                     gene_scores.append(round(sc, 7))
+
                 mean_value = 0
                 sum_value = 0
                 if len(gene_scores) > 0:
                     mean_value = sum(gene_scores)/len(gene_scores)
                     sum_value = sum(gene_scores)
 
+                null_means.append(mean_value)
+                null_sums.append(sum_value)
+
                 if mean_value >= observed_trap:
                     extreme_count += 1
 
-                if sum_value >= extreme_count_sum:
+                if sum_value >= observed_trap_sum:
                     extreme_count_sum += 1
 
             p_value = (extreme_count + 1) / (n_permutations + 1)
             score = round(float(max(0.0, -np.log(p_value))), 5)
             summary["TFBS_affinity_score"] = score
+            summary["TFBS_affinity_zscore"] = _zscore(observed_trap, null_means)
 
             p_value_sum = (extreme_count_sum + 1) / (n_permutations + 1)
             score_sum = round(float(max(0.0, -np.log(p_value_sum))), 5)
             summary["TFBS_affinity_sum_score"] = score_sum
+            summary["TFBS_affinity_sum_zscore"] = _zscore(observed_trap_sum, null_sums)
 
     else:
         raise ValueError("Invalid human")

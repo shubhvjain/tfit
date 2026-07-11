@@ -399,75 +399,103 @@ GO_METHODS = {
     },
 }
 
-
-
-
-def GO_SCORES(sources,target,dataset_cache,organism="human",use_pairwise_cache=True,data_path=None,pairs=None):
-    """
-    """ 
-    source_names = sources
-    # if organism == "arabidopsis":
-    #     gkey = ORGANISM_METADATA[organism]["gene_mapping"]
-    #     gene_map = dataset_cache[gkey]
-    #     gene_map_rev = {v: k for k, v in gene_map.items()}
-
-    #     source_names =  [gene_map[s] for s in sources if s in gene_map.keys()]
-    #     target_name = gene_map[target]
-    #     use_pairwise_cache = False
-    #     print(source_names)
-
-    if pairs is None:
-        pairs = generate_tf_pairs(source_names)
-
-    if use_pairwise_cache :
-        pair_key =  ORGANISM_METADATA[organism]["pair_cache"]
+def _go_triplet(genes, pairs, dataset_cache, organism, use_pairwise_cache):
+    """Compute lin/resnik/jc BMA scores for a gene set (cache or raw path)."""
+    if use_pairwise_cache:
+        pair_key = ORGANISM_METADATA[organism]["pair_cache"]
         if dataset_cache[pair_key] is None:
             raise ValueError("No pair cache provided")
-        return _go_scores_from_cache(sources, pairs, dataset_cache[pair_key])
+        return _go_scores_from_cache(genes, pairs, dataset_cache[pair_key])
 
+    go_key = ORGANISM_METADATA[organism]["go_key"]
+    godag = dataset_cache[go_key]["godag"]
+    gene2go = dataset_cache[go_key]["gene2go"]
+    termcounts = TermCounts(godag, gene2go)
+    terms_cache: dict = {}
+
+    lin_scores, resnik_scores, jc_scores = [], [], []
+    for gene1, gene2 in pairs:
+        if gene1 not in terms_cache:
+            terms_cache[gene1] = list(gene2go.get(gene1, set()))
+        if gene2 not in terms_cache:
+            terms_cache[gene2] = list(gene2go.get(gene2, set()))
+        terms1, terms2 = terms_cache[gene1], terms_cache[gene2]
+
+        lin_scores.append(_gene_sim_bma_with_terms(terms1, terms2, godag, termcounts, lin_sim))
+        resnik_scores.append(_gene_sim_bma_with_terms(terms1, terms2, godag, termcounts, resnik_sim))
+        jc_scores.append(_gene_sim_bma_with_terms(terms1, terms2, godag, termcounts, _jc_sim))
+
+    def _safe_mean(values):
+        arr = np.array(values, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        return float(np.mean(arr)) if len(arr) > 0 else 0.0
+
+    return {
+        "goa_similarity_lin":    round(_safe_mean(lin_scores), 5),
+        "goa_similarity_resnik": round(_safe_mean(resnik_scores), 5),
+        "goa_similarity_jc":     round(_safe_mean(jc_scores), 5),
+    }
+
+
+def go_null_distribution(n_sources, background, dataset_cache, organism, use_pairwise_cache, n_permutations=100):
+    """R random gene sets of size n_sources from background, scored on all 3 methods."""
+    rows = []
+    for _ in range(n_permutations):
+        rand_genes = list(np.random.choice(background, size=n_sources, replace=False))
+        rand_pairs = generate_tf_pairs(rand_genes)
+        rows.append(_go_triplet(rand_genes, rand_pairs, dataset_cache, organism, use_pairwise_cache))
+    return pd.DataFrame(rows)
+
+
+def go_scores_with_pvalue(sources, pairs, dataset_cache, organism, use_pairwise_cache, n_permutations=100):
+    """Observed GO scores (lin, resnik, jc) + empirical p-value and z-score vs null."""
+    obs = _go_triplet(sources, pairs, dataset_cache, organism, use_pairwise_cache)
+
+    background_key = ORGANISM_METADATA[organism]["source_background_list"]
+    background = dataset_cache[background_key]
+
+    null_df = go_null_distribution(
+        n_sources=len(sources),
+        background=background,
+        dataset_cache=dataset_cache,
+        organism=organism,
+        use_pairwise_cache=use_pairwise_cache,
+        n_permutations=n_permutations,
+    )
+
+    result = dict(obs)
+    for method in ("lin", "resnik", "jc"):
+        col = f"goa_similarity_{method}"
+        null_arr = null_df[col].to_numpy()
+        obs_val = obs[col]
+
+        p_value = float((np.sum(null_arr >= obs_val) + 1) / (n_permutations + 1))
+        score_sum = round(float(max(0.0, -np.log(p_value))), 5)
         
-    else:
-        go_key = ORGANISM_METADATA[organism]["go_key"]
-        godag = dataset_cache[go_key]["godag"]
-        gene2go = dataset_cache[go_key]["gene2go"]
-        termcounts = TermCounts(godag, gene2go)
-        
-        terms_cache: dict = {}
+        std = null_arr.std(ddof=1)
+        z = float((obs_val - null_arr.mean()) / std) if std > 0 else 0.0
 
-        lin_scores = []
-        resnik_scores = []
-        jc_scores = []
+        result[f"{col}_score"] = score_sum
+        result[f"{col}_z"] = z
 
-        for gene1, gene2 in pairs:
-            if gene1 not in terms_cache:
-                terms_cache[gene1] = list(gene2go.get(gene1, set()))
-            if gene2 not in terms_cache:
-                terms_cache[gene2] = list(gene2go.get(gene2, set()))
+    return result
 
-            # print(terms_cache)
-            terms1 = terms_cache[gene1]
-            terms2 = terms_cache[gene2]
-            # print(terms1)
-            # print(terms2)
 
-            # Each method gets pre-fetched terms — no redundant gene2go lookups
-            lin_scores.append(
-                _gene_sim_bma_with_terms(terms1, terms2, godag, termcounts, lin_sim))
-            resnik_scores.append(
-                _gene_sim_bma_with_terms(terms1, terms2, godag, termcounts, resnik_sim))
-            jc_scores.append(
-                _gene_sim_bma_with_terms(terms1, terms2, godag, termcounts, _jc_sim))
+def GO_SCORES(sources, target, dataset_cache, organism="human", use_pairwise_cache=True,
+              data_path=None, pairs=None, n_permutations=100):
+    """
+    """
+    if pairs is None:
+        pairs = generate_tf_pairs(sources)
 
-        def _safe_mean(values: list) -> float:
-            arr = np.array(values, dtype=float)
-            arr = arr[np.isfinite(arr)]
-            return float(np.mean(arr)) if len(arr) > 0 else 0.0
-
-        return {
-            "goa_similarity_lin":    round(_safe_mean(lin_scores), 5),
-            "goa_similarity_resnik": round(_safe_mean(resnik_scores), 5),
-            "goa_similarity_jc":     round(_safe_mean(jc_scores), 5),
-        }
+    return go_scores_with_pvalue(
+        sources=sources,
+        pairs=pairs,
+        dataset_cache=dataset_cache,
+        organism=organism,
+        use_pairwise_cache=use_pairwise_cache,
+        n_permutations=n_permutations,
+    )
 
 
 def GO_EA(source,target,dataset_cache,organism="human",threshold=0.05):

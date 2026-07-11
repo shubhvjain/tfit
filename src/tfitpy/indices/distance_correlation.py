@@ -78,7 +78,7 @@ def source_source_dcorr(sources, source_cache, source_list, n_permutations=100):
     n = len(sources)
 
     if n < 2:
-        return 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     sub_source = source_cache.loc[sources, sources]
     obs_sources = sub_source.values[np.triu_indices(n, k=1)].mean()
@@ -87,19 +87,23 @@ def source_source_dcorr(sources, source_cache, source_list, n_permutations=100):
     all_sources = list(dict.fromkeys(all_sources))
 
     D = compute_D_from_source_cache(source_cache)
-    source_source_ec = expression_coherence_from_cache(sources, source_cache, D)
+    obs_ec = expression_coherence_from_cache(sources, source_cache, D)
 
     if len(all_sources) < n:
         return (
             float(round(obs_sources, 5)),
             0.0,
             0.0,
-            float(round(source_source_ec, 5)),
+            float(round(obs_ec, 5)),
+            0.0,
+            0.0,
         )
 
     all_sources_arr = np.array(all_sources)
     better_source = 0
+    better_ec = 0
     perm_means = np.empty(n_permutations)
+    perm_ec = np.empty(n_permutations)
 
     for i in range(n_permutations):
         perm_sources = np.random.choice(all_sources_arr, size=n, replace=False)
@@ -110,17 +114,32 @@ def source_source_dcorr(sources, source_cache, source_list, n_permutations=100):
         if perm_sources_mean >= obs_sources:
             better_source += 1
 
+        # reuse the same permuted draw for the EC null distribution
+        perm_ec_val = expression_coherence_from_cache(list(perm_sources), source_cache, D)
+        perm_ec[i] = perm_ec_val
+
+        if perm_ec_val >= obs_ec:
+            better_ec += 1
+
     p_source = (better_source + 1) / (n_permutations + 1)
     dc_source_score = -np.log(p_source)
 
     null_std = perm_means.std(ddof=1)
     z_source = (obs_sources - perm_means.mean()) / null_std if null_std > 0 else 0.0
 
+    p_ec = (better_ec + 1) / (n_permutations + 1)
+    dc_ec_score = -np.log(p_ec)
+
+    ec_null_std = perm_ec.std(ddof=1)
+    z_ec = (obs_ec - perm_ec.mean()) / ec_null_std if ec_null_std > 0 else 0.0
+
     return (
         float(round(obs_sources, 5)),
         float(round(dc_source_score, 5)),
         float(round(z_source, 5)),
-        float(round(source_source_ec, 5)),
+        float(round(obs_ec, 5)),
+        float(round(dc_ec_score, 5)),
+        float(round(z_ec, 5)),
     )
 
 
@@ -177,7 +196,7 @@ def DCORR_SCORES(
     dataset_cache,
     target=None,
     organism="human",
-    n_permutations=100,
+    n_permutations=200,
 ):
     gene_expression = dataset_cache["gene_expression"]
 
@@ -202,7 +221,7 @@ def DCORR_SCORES(
     if "dcorr_D_threshold" not in dataset_cache:
         dataset_cache["dcorr_D_threshold"] = compute_D_from_source_cache(source_cache)
 
-    dcor_src_obs, dcor_src_score, z_src, src_ec = source_source_dcorr(
+    dcor_src_obs, dcor_src_score, z_src, src_ec, src_ec_score, z_ec = source_source_dcorr(
         sources=sources,
         source_cache=source_cache,
         source_list=source_list,
@@ -228,13 +247,15 @@ def DCORR_SCORES(
         heatmap_matrix = build_heatmap_matrix(sources, target, source_cache, target_cache, gene_expression)
 
     result = {
-        "dCor_sources_obs": dcor_src_obs,
-        "dCor_target_obs": dcor_tgt_obs,
+        "dCor_sources": dcor_src_obs,
+        "dCor_target": dcor_tgt_obs,
         "dCor_sources_score": dcor_src_score,
         "dCor_target_score": dcor_tgt_score,
         "dCor_sources_z": z_src,
         "dCor_target_z": z_tgt,
-        "dCor_sources_score_EC": src_ec,
+        "dCor_EC": src_ec,
+        "dCor_EC_score": src_ec_score,
+        "dCor_EC_z": z_ec,
     }
 
     if tgt_err is not None:

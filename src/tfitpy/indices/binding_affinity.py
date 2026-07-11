@@ -220,9 +220,12 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
                 null_means = []
                 null_sums = []
 
+                cache_columns = set(trap_cache.columns)
+                background_genes_in_jaspar = [g for g in background_genes if g in cache_columns]
+                n_found = len(evidence)
                 for _ in range(n_permutations):
-                    simulated_genes = random.sample(background_genes, n_items)
-
+                    # simulated_genes = random.sample(background_genes, n_items)
+                    simulated_genes = random.sample(background_genes_in_jaspar, n_found)
                     p1, m1, s1, e1 = compute_tfbs_score_cache(
                         target, simulated_genes, trap_cache)
 
@@ -284,9 +287,14 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
                 null_means = []
                 null_sums = []
 
-                for _ in range(n_permutations):
-                    simulated_genes = random.sample(background_genes, n_items)
+                all_motifs = get_all_motifs(jaspar, organism)
+                jaspar_gene_names = {m.name for m in all_motifs}
+                background_genes_in_jaspar = [g for g in background_genes if g in jaspar_gene_names]
+                n_found = len(motif_list)
 
+                for _ in range(n_permutations):
+                    # simulated_genes = random.sample(background_genes, n_items)
+                    simulated_genes = random.sample(background_genes_in_jaspar, n_found)
                     motif_list1 = get_motifs_found(
                         jaspar, organism, simulated_genes)
 
@@ -384,6 +392,14 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
         bg_key = ORGANISM_METADATA[organism]["source_background_list"]
         background_genes = dataset_cache[bg_key]
         # print(background_genes)
+        all_motifs = get_all_motifs(jaspar, organism)
+        jaspar_gene_names = {m.name for m in all_motifs}
+
+        background_genes_in_jaspar = [g for g in background_genes
+            if g in gene_map and gene_map[g] in jaspar_gene_names
+        ]
+        n_found = len(motif_list)
+
         if summary["TF_found_per"] > 0:
             extreme_count = 0
             extreme_count_sum = 0
@@ -391,7 +407,7 @@ def TFBA_SCORE(sources, target, dataset_cache, organism="human", use_pairwise_ca
             null_sums = []
 
             for _ in range(n_permutations):
-                simulated_genes = random.sample(background_genes, n_items)
+                simulated_genes = random.sample(background_genes_in_jaspar, n_found)
                 simulated_gene_name = [gene_map[s]
                                        for s in simulated_genes if s in gene_map.keys()]
                 motif_list1 = get_motifs_found(

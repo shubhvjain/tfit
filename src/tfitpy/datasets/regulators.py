@@ -38,7 +38,7 @@ def process_tflist(data_path,rerun=False):
 def load_tflist(data_path):
     """Load hippie into memory"""
     file = Path(data_path) / f"{TFLIST['FOLDER']}" / f"{TFLIST['FILE']}" 
-    print(file)
+    # print(file)
     if not file.exists():
         raise FileNotFoundError(f" {TFLIST['FILE']} not found. Run setup_datasets() first.")
     
@@ -104,7 +104,7 @@ def process_tflist_plant(data_path,rerun=False):
 def load_tflist_plant(data_path):
     """Load hippie into memory"""
     file = Path(data_path) / f"{TFLIST_PLANT['FOLDER']}" / f"{TFLIST_PLANT['FILE']}" 
-    print(file)
+    # print(file)
     if not file.exists():
         raise FileNotFoundError(f" {TFLIST_PLANT['FILE']} not found. Run setup_datasets() first.")
     
@@ -115,7 +115,7 @@ def load_tflist_plant(data_path):
 def get_regulator_list(data_path,organism="human"):
     """"""
     if organism == "human":
-        print()
+        #print()
         tf = load_tflist(data_path)
         tf_list = tf["gene_name"].tolist()
         co = load_coreglist(data_path)
@@ -123,7 +123,7 @@ def get_regulator_list(data_path,organism="human"):
         all_regulators = list(set(tf_list) | set(co_list))
         return all_regulators
     elif organism == "arabidopsis":
-        print()
+        #print()
         tf = load_tflist_plant(data_path)
         tf_list = tf["Gene_ID"].tolist() 
         return tf_list
